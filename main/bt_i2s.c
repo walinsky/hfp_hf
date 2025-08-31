@@ -158,8 +158,9 @@ i2s_std_clk_config_t bt_i2s_get_hfp_clk_cfg(void)
 
 i2s_std_slot_config_t bt_i2s_get_hfp_tx_slot_cfg(void)
 {
-    i2s_std_slot_config_t hfp_slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(HFP_I2S_DATA_BIT_WIDTH, I2S_SLOT_MODE_MONO);
-    hfp_slot_cfg.slot_mask = I2S_STD_SLOT_BOTH;
+    // I2S_STD_PCM_SLOT_DEFAULT_CONFIG, I2S_STD_MSB_SLOT_DEFAULT_CONFIG, or I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG
+    i2s_std_slot_config_t hfp_slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(HFP_I2S_DATA_BIT_WIDTH, I2S_SLOT_MODE_MONO);
+    // hfp_slot_cfg.slot_mask = I2S_STD_SLOT_BOTH;
     ESP_LOGI(BT_I2S_TAG, "reconfiguring hfp tx slot to data bit width:  %d", HFP_I2S_DATA_BIT_WIDTH);
     return hfp_slot_cfg;
 }
@@ -575,7 +576,7 @@ void bt_i2s_hfp_tx_task_handler(void *arg)
     size_t bytes_written = 0;
     for (;;) {
         if (s_bt_i2s_hfp_tx_task_running) {
-            if (s_i2s_hfp_tx_ringbuffer_mode != RINGBUFFER_MODE_PREFETCHING){
+            if (s_i2s_hfp_tx_ringbuffer_mode != RINGBUFFER_MODE_PREFETCHING) {
                 item_size = 0;
                 /* receive data from ringbuffer and write it to I2S DMA transmit buffer */
                 data = (uint8_t *)xRingbufferReceiveUpTo(s_i2s_hfp_tx_ringbuf, &item_size, 0, item_size_upto);
@@ -588,9 +589,8 @@ void bt_i2s_hfp_tx_task_handler(void *arg)
                     i2s_channel_write(tx_chan, data, item_size, &bytes_written, portMAX_DELAY);
                 }
                 vRingbufferReturnItem(s_i2s_hfp_tx_ringbuf, (void *)data);
-            } 
-            else { 
-                vTaskDelay(pdMS_TO_TICKS(40));
+            } else { 
+                vTaskDelay(pdMS_TO_TICKS(40)); // give ringbuffer some time to prefetch
             }
         } else {
             // give semaphore so s_i2s_hfp_tx_ringbuf can be safely deleted

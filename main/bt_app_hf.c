@@ -209,17 +209,17 @@ esp_sbc_dec_cfg_t hfp_dec_cfg = {
     .sbc_mode = ESP_SBC_MODE_MSBC,
 };
 void *hfp_dec_handle = NULL;
-
-esp_sbc_enc_config_t hfp_enc_cfg = {
-    .allocation_method = ESP_SBC_ALLOC_SNR,
-    .bitpool = ESP_HF_MSBC_BITPOOL,
-    .block_length = ESP_HF_MSBC_BLOCK_LENGTH,
-    .sub_bands_num = ESP_HF_MSBC_SUBBANDS,
-    .sample_rate = 16000,
-    .bits_per_sample = 16,
-    .ch_mode = ESP_SBC_CH_MODE_MONO,
-    .sbc_mode = ESP_SBC_MODE_MSBC,
-};
+esp_sbc_enc_config_t hfp_enc_cfg = ESP_SBC_MSBC_ENC_CONFIG_DEFAULT();
+// esp_sbc_enc_config_t hfp_enc_cfg = {
+//     .allocation_method = ESP_SBC_ALLOC_SNR,
+//     .bitpool = ESP_HF_MSBC_BITPOOL,
+//     .block_length = ESP_HF_MSBC_BLOCK_LENGTH,
+//     .sub_bands_num = ESP_HF_MSBC_SUBBANDS,
+//     .sample_rate = 16000,
+//     .bits_per_sample = 16,
+//     .ch_mode = ESP_SBC_CH_MODE_MONO,
+//     .sbc_mode = ESP_SBC_MODE_MSBC,
+// };
 void *hfp_enc_handle = NULL;
 
 static void bt_app_hf_client_audio_data_cb(esp_hf_sync_conn_hdl_t sync_conn_hdl, esp_hf_audio_buff_t *audio_buf, bool is_bad_frame)
@@ -473,7 +473,7 @@ void bt_app_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_
     }
 }
 
-
+int hfp_sbc_decoder_counter = 0;
 bool hfp_sbc_decoder(uint8_t *data, uint16_t data_len, esp_audio_dec_out_frame_t *out_frame)
 {
     int inbuf_sz = data_len;
@@ -492,6 +492,11 @@ bool hfp_sbc_decoder(uint8_t *data, uint16_t data_len, esp_audio_dec_out_frame_t
 
     int dec_ret = 0;
     dec_ret = esp_sbc_dec_decode(hfp_dec_handle, &in_frame, out_frame, &info);
+    if (hfp_sbc_decoder_counter == 0) {
+        ESP_LOGI(BT_HF_TAG, "decoded frame sample rate: %d, bits per sample: %d, channel(s): %d, bitrate: %d, frame size: %d",
+             info.sample_rate, info.bits_per_sample, info.channel, info.bitrate, info.frame_size);
+    }
+    hfp_sbc_decoder_counter++;
     if (dec_ret != ESP_AUDIO_ERR_OK) {
         ESP_LOGE(BT_HF_TAG, "could not decode: %d", dec_ret);
         free(inbuf);
