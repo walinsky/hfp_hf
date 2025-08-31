@@ -274,8 +274,7 @@ void bt_i2s_tx_channel_disable(void)
     if (tx_chan_running)
      {
         ESP_LOGI(BT_I2S_TAG, " -- bt_i2s_tx_channel running; disabling now");
-        int ret = i2s_channel_disable(tx_chan);
-        ESP_LOGI(BT_I2S_TAG, "%s disabling returned: %d", __func__, ret);
+        ESP_ERROR_CHECK(i2s_channel_disable(tx_chan));
      }
     tx_chan_running = false;
 }
@@ -297,8 +296,7 @@ void bt_i2s_rx_channel_disable(void)
     if (rx_chan_running)
      {
         ESP_LOGI(BT_I2S_TAG, " -- bt_i2s_rx_channel running; disabling now");
-        int ret = i2s_channel_disable(rx_chan);
-        ESP_LOGI(BT_I2S_TAG, "%s disabling returned: %d", __func__, ret);
+        ESP_ERROR_CHECK(i2s_channel_disable(rx_chan));
      }
     rx_chan_running = false;
 }
@@ -545,7 +543,7 @@ void bt_i2s_hfp_task_deinit(void)
     }
     if (pdTRUE == xSemaphoreTake(s_i2s_hfp_tx_ringbuf_delete, portMAX_DELAY)) {
         if (s_i2s_hfp_tx_ringbuf) {
-            ESP_LOGE(BT_I2S_TAG, "%s, deleting s_i2s_hfp_tx_ringbuf", __func__);
+            ESP_LOGI(BT_I2S_TAG, "%s, deleting s_i2s_hfp_tx_ringbuf", __func__);
             vRingbufferDelete(s_i2s_hfp_tx_ringbuf);
             s_i2s_hfp_tx_ringbuf = NULL;
         }
@@ -557,7 +555,7 @@ void bt_i2s_hfp_task_deinit(void)
     }
     if (pdTRUE == xSemaphoreTake(s_i2s_hfp_rx_ringbuf_delete, portMAX_DELAY)) {
         if (s_i2s_hfp_rx_ringbuf) {
-            ESP_LOGE(BT_I2S_TAG, "%s, deleting s_i2s_hfp_rx_ringbuf", __func__);
+            ESP_LOGI(BT_I2S_TAG, "%s, deleting s_i2s_hfp_rx_ringbuf", __func__);
             vRingbufferDelete(s_i2s_hfp_rx_ringbuf);
             s_i2s_hfp_rx_ringbuf = NULL;
         }
@@ -592,7 +590,7 @@ void bt_i2s_hfp_tx_task_handler(void *arg)
                 vRingbufferReturnItem(s_i2s_hfp_tx_ringbuf, (void *)data);
             } 
             else { 
-                vTaskDelay(pdMS_TO_TICKS(8));
+                vTaskDelay(pdMS_TO_TICKS(40));
             }
         } else {
             // give semaphore so s_i2s_hfp_tx_ringbuf can be safely deleted
