@@ -493,8 +493,8 @@ bool hfp_sbc_decoder(uint8_t *data, uint16_t data_len, esp_audio_dec_out_frame_t
     int dec_ret = 0;
     dec_ret = esp_sbc_dec_decode(hfp_dec_handle, &in_frame, out_frame, &info);
     if (hfp_sbc_decoder_counter == 0) {
-        ESP_LOGI(BT_HF_TAG, "decoded frame sample rate: %d, bits per sample: %d, channel(s): %d, bitrate: %d, frame size: %d",
-             info.sample_rate, info.bits_per_sample, info.channel, info.bitrate, info.frame_size);
+        ESP_LOGI(BT_HF_TAG, "%s decoded frame sample rate: %d, bits per sample: %d, channel(s): %d, bitrate: %d, frame size: %d",
+             __func__, info.sample_rate, info.bits_per_sample, info.channel, info.bitrate, info.frame_size);
     }
     hfp_sbc_decoder_counter++;
     if (dec_ret != ESP_AUDIO_ERR_OK) {
@@ -509,6 +509,7 @@ bool hfp_sbc_decoder(uint8_t *data, uint16_t data_len, esp_audio_dec_out_frame_t
     return true;
 }
 
+int hfp_sbc_encoder_counter = 0;
 bool hfp_sbc_encoder(uint8_t *data, uint16_t data_len, esp_audio_enc_out_frame_t *out_frame)
 {
     int inbuf_sz = 0;
@@ -517,7 +518,6 @@ bool hfp_sbc_encoder(uint8_t *data, uint16_t data_len, esp_audio_enc_out_frame_t
         ESP_LOGE(BT_HF_TAG, "%s, could not get frame size", __func__);
         return false;
     };
-    // ESP_LOGI(BT_HF_TAG, "insize:%d outsize:%d\n", inbuf_sz, outbuf_sz);
     uint8_t *inbuf = calloc(1, inbuf_sz);
     uint8_t *outbuf = calloc(1, outbuf_sz);
     esp_audio_enc_in_frame_t in_frame = {0};
@@ -533,7 +533,14 @@ bool hfp_sbc_encoder(uint8_t *data, uint16_t data_len, esp_audio_enc_out_frame_t
         return false;
     } else {
         // ESP_LOGI(BT_HF_TAG, "%s, encoded msbc data data len: %d encoded size: %d data: %p",__func__, out_frame->len, out_frame->encoded_bytes, out_frame->buffer);   
-        
+            if (hfp_sbc_encoder_counter == 0) {
+                esp_audio_enc_info_t *enc_info = malloc(sizeof *enc_info);
+                esp_sbc_enc_get_info(hfp_enc_handle, enc_info);
+                ESP_LOGI(BT_HF_TAG, "%s encoded frame sample rate: %d, bits per sample: %d, channel(s): %d, bitrate: %d",
+                     __func__, enc_info->sample_rate, enc_info->bits_per_sample, enc_info->channel, enc_info->bitrate);
+                free(enc_info);
+            }
+    hfp_sbc_encoder_counter++;
         
     }
     free(inbuf);
@@ -565,14 +572,12 @@ static void heap_monitor_task(void *pvParameters) {
         // Get the number of free bytes in the heap
         int heap_size = esp_get_free_heap_size();
         ESP_LOGI(BT_HF_TAG, "%s, heap size: %d, running: %d",__func__, heap_size, s_hfp_heap_monitor_task_running);   
-        // Delay the task for a specified time (e.g., 5 seconds)
         vTaskDelay(pdMS_TO_TICKS(500));
         if (!s_hfp_heap_monitor_task_running){
-            break;
+            ESP_LOGI(BT_HF_TAG, "%s, deleting myself",__func__); 
+            vTaskDelete(NULL);
         }
     }
-    ESP_LOGI(BT_HF_TAG, "%s, deleting myself",__func__); 
-    vTaskDelete(NULL);
 }
 
 static void kill_hfp_audio_task(void *pvParameters) {
@@ -582,7 +587,7 @@ static void kill_hfp_audio_task(void *pvParameters) {
     hfp_sbc_codec_stop();
     ESP_LOGI(BT_HF_TAG, "%s stopping monitor task", __func__);
     s_hfp_heap_monitor_task_running = false;
-    vTaskDelete(s_hfp_heap_monitor_task_handle);
+    // vTaskDelete(s_hfp_heap_monitor_task_handle);
     ESP_LOGI(BT_HF_TAG, "%s, deleting myself",__func__); 
     vTaskDelete(NULL);
 }

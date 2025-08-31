@@ -158,6 +158,7 @@ i2s_std_clk_config_t bt_i2s_get_hfp_clk_cfg(void)
 
 i2s_std_slot_config_t bt_i2s_get_hfp_tx_slot_cfg(void)
 {
+    // decoded frame sample rate: 16000, bits per sample: 16, channel(s): 1, bitrate: 60800, frame size: 17
     // I2S_STD_PCM_SLOT_DEFAULT_CONFIG, I2S_STD_MSB_SLOT_DEFAULT_CONFIG, or I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG
     i2s_std_slot_config_t hfp_slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(HFP_I2S_DATA_BIT_WIDTH, I2S_SLOT_MODE_MONO);
     // hfp_slot_cfg.slot_mask = I2S_STD_SLOT_BOTH;
@@ -692,7 +693,7 @@ void bt_i2s_hfp_write_tx_ringbuf(const uint8_t *data, uint32_t size)
             ESP_LOGI(BT_I2S_TAG, "%s - hfp tx ringbuffer data increased! (%d) mode changed: RINGBUFFER_MODE_PROCESSING", __func__, item_size);
             s_i2s_hfp_tx_ringbuffer_mode = RINGBUFFER_MODE_PROCESSING;
         } else {
-            ESP_LOGI(BT_I2S_TAG, "%s - hfp tx ringbuffer size (%d) mode still: RINGBUFFER_MODE_PREFETCHING", __func__, item_size);
+            // ESP_LOGI(BT_I2S_TAG, "%s - hfp tx ringbuffer size (%d) mode still: RINGBUFFER_MODE_PREFETCHING", __func__, item_size);
         }
     }
 }
