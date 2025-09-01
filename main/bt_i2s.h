@@ -54,7 +54,8 @@ void bt_i2s_hfp_tx_task_handler(void *arg);
 void bt_i2s_hfp_rx_task_handler(void *arg);
 void bt_i2s_hfp_write_tx_ringbuf(const uint8_t *data, uint32_t size);
 void bt_i2s_hfp_write_rx_ringbuf(unsigned char *data, uint32_t size);
-void bt_i2s_hfp_read_rx_ringbuf(esp_hf_audio_buff_t *mic_data);
+// void bt_i2s_hfp_read_rx_ringbuf(esp_hf_audio_buff_t *mic_data);
+size_t bt_i2s_hfp_read_rx_ringbuf(uint8_t *mic_data);
 void bt_i2s_hfp_start(void);
 void bt_i2s_hfp_stop(void);
 

@@ -205,7 +205,7 @@ static bool s_hfp_audio_connected = false;
 */
 esp_sbc_dec_cfg_t hfp_dec_cfg = {
     // .ch_num = 1,
-    .enable_plc = false,
+    .enable_plc = true,
     .sbc_mode = ESP_SBC_MODE_MSBC,
 };
 void *hfp_dec_handle = NULL;
@@ -224,7 +224,6 @@ void *hfp_enc_handle = NULL;
 
 static void bt_app_hf_client_audio_data_cb(esp_hf_sync_conn_hdl_t sync_conn_hdl, esp_hf_audio_buff_t *audio_buf, bool is_bad_frame)
 {
-    // wanna race
     if (!s_hfp_audio_connected) {
         esp_hf_client_audio_buff_free(audio_buf);
         return;
@@ -242,22 +241,36 @@ static void bt_app_hf_client_audio_data_cb(esp_hf_sync_conn_hdl_t sync_conn_hdl,
         esp_hf_client_audio_buff_free(audio_buf);
         return;
     }
-
+    
     // fetch our msbc encoded mic data and send it to the ag
-    esp_hf_audio_buff_t *audio_data_to_send = esp_hf_client_audio_buff_alloc(sizeof(esp_hf_audio_buff_t));
-    bt_i2s_hfp_read_rx_ringbuf(audio_data_to_send);
-    if (audio_data_to_send->data_len == 0) {
+    esp_hf_audio_buff_t *audio_data_to_send = esp_hf_client_audio_buff_alloc((uint16_t) sizeof(esp_hf_audio_buff_t));
+    uint8_t *mic_data = (uint8_t *) malloc (ESP_HF_MSBC_ENCODED_FRAME_SIZE);
+    size_t len = bt_i2s_hfp_read_rx_ringbuf(mic_data);
+    audio_data_to_send->buff_size = len;
+    audio_data_to_send->data_len = len;
+    audio_data_to_send->data = mic_data;
+
+    if (s_msbc_air_mode && audio_data_to_send->data_len > ESP_HF_MSBC_ENCODED_FRAME_SIZE) {
+        audio_data_to_send->data_len = ESP_HF_MSBC_ENCODED_FRAME_SIZE;
+    }
+
+    if (audio_data_to_send->data_len == 0 || audio_data_to_send->data == NULL) {
         esp_hf_client_audio_buff_free(audio_data_to_send);
         return;
     }
-    /* send audio data back to AG */
-    // if (esp_hf_client_audio_data_send(s_sync_conn_hdl, audio_data_to_send) != ESP_OK) {
-    //     esp_hf_client_audio_buff_free(audio_data_to_send);
-    //     ESP_LOGW(BT_HF_TAG, "%s fail to send audio data", __func__);
-    // } else {
-    //     ESP_LOGW(BT_HF_TAG, "%s sent mic audio data len: %d, buf size: %d", __func__, audio_data_to_send->data_len, audio_data_to_send->buff_size);
-    // }
-    esp_hf_client_audio_buff_free(audio_data_to_send);
+
+    if (audio_data_to_send->data - (uint8_t *)(audio_buf + 1) >= 0) {
+        if (esp_hf_client_audio_data_send(s_sync_conn_hdl, audio_data_to_send) != ESP_OK) {
+            esp_hf_client_audio_buff_free(audio_data_to_send);
+            ESP_LOGW(BT_HF_TAG, "%s fail to send audio data", __func__);
+        } else {
+            ESP_LOGI(BT_HF_TAG, "%s sent mic audio data len: %d, buf size: %d", __func__, audio_data_to_send->data_len, audio_data_to_send->buff_size);
+        }
+    } else {
+        ESP_LOGW(BT_HF_TAG, "%s, Not sending data. BTA_HfClientAudioDataSend in bta_hf_client_api.c expects *data %d to be > than *audio_buf %d, difference is: %d",
+                        __func__, audio_data_to_send->data, (uint8_t *)audio_buf, audio_data_to_send->data - (uint8_t *)(audio_buf + 1));
+        esp_hf_client_audio_buff_free(audio_data_to_send);
+    }
 }
 
 
@@ -533,13 +546,13 @@ bool hfp_sbc_encoder(uint8_t *data, uint16_t data_len, esp_audio_enc_out_frame_t
         return false;
     } else {
         // ESP_LOGI(BT_HF_TAG, "%s, encoded msbc data data len: %d encoded size: %d data: %p",__func__, out_frame->len, out_frame->encoded_bytes, out_frame->buffer);   
-            if (hfp_sbc_encoder_counter == 0) {
-                esp_audio_enc_info_t *enc_info = malloc(sizeof *enc_info);
-                esp_sbc_enc_get_info(hfp_enc_handle, enc_info);
-                ESP_LOGI(BT_HF_TAG, "%s encoded frame sample rate: %d, bits per sample: %d, channel(s): %d, bitrate: %d",
-                     __func__, enc_info->sample_rate, enc_info->bits_per_sample, enc_info->channel, enc_info->bitrate);
-                free(enc_info);
-            }
+        if (hfp_sbc_encoder_counter == 0) {
+            esp_audio_enc_info_t *enc_info = malloc(sizeof *enc_info);
+            esp_sbc_enc_get_info(hfp_enc_handle, enc_info);
+            ESP_LOGI(BT_HF_TAG, "%s encoded frame sample rate: %d, bits per sample: %d, channel(s): %d, bitrate: %d",
+                    __func__, enc_info->sample_rate, enc_info->bits_per_sample, enc_info->channel, enc_info->bitrate);
+            free(enc_info);
+        }
     hfp_sbc_encoder_counter++;
         
     }
@@ -571,7 +584,7 @@ static void heap_monitor_task(void *pvParameters) {
     for (;;) {
         // Get the number of free bytes in the heap
         int heap_size = esp_get_free_heap_size();
-        ESP_LOGI(BT_HF_TAG, "%s, heap size: %d, running: %d",__func__, heap_size, s_hfp_heap_monitor_task_running);   
+        ESP_LOGI(BT_HF_TAG, "%s, heap size: %d",__func__, heap_size);   
         vTaskDelay(pdMS_TO_TICKS(500));
         if (!s_hfp_heap_monitor_task_running){
             ESP_LOGI(BT_HF_TAG, "%s, deleting myself",__func__); 

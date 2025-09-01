@@ -636,16 +636,10 @@ void bt_i2s_hfp_rx_task_handler(void *arg)
                 }
                 // sbc encode before putting on ringbuf!
                 if (hfp_sbc_encoder(i2s_send_buff, 240, &out_frame)) {
-                    if (out_frame.len > ESP_HF_MSBC_ENCODED_FRAME_SIZE) {
-                        /*
-                        * in mSBC air mode, we may receive a mSBC frame with some padding bytes at the end,
-                        * but esp_hf_client_audio_data_send API do not allow adding padding bytes at the end,
-                        * so we need to remove those padding bytes before send back to peer device.
-                        */
-                        out_frame.len = ESP_HF_MSBC_ENCODED_FRAME_SIZE;
+                    if (out_frame.encoded_bytes > ESP_HF_MSBC_ENCODED_FRAME_SIZE) {
+                        out_frame.encoded_bytes = ESP_HF_MSBC_ENCODED_FRAME_SIZE;
                     }
-
-                    bt_i2s_hfp_write_rx_ringbuf(out_frame.buffer, out_frame.len);
+                    bt_i2s_hfp_write_rx_ringbuf(out_frame.buffer, out_frame.encoded_bytes);
                 }
             } else { /* i2s_channel_read */
                 ESP_LOGI(BT_I2S_TAG, "%s hfp i2s read Failed!", __func__);
@@ -738,21 +732,17 @@ void bt_i2s_hfp_write_rx_ringbuf(unsigned char *data, uint32_t size)
 /* 
     this is called from hfp client for getting the (mic) audio data from the rx ringbuffer
  */
-void bt_i2s_hfp_read_rx_ringbuf(esp_hf_audio_buff_t *mic_data)
+size_t bt_i2s_hfp_read_rx_ringbuf(uint8_t *mic_data)
 {
+    size_t item_size = 0;
     if (s_i2s_hfp_rx_ringbuffer_mode != RINGBUFFER_MODE_PREFETCHING) {
-        uint8_t *data = NULL;
-        size_t item_size = 0;
-
-        data = (uint8_t *)xRingbufferReceiveUpTo(s_i2s_hfp_rx_ringbuf, &item_size, 10000, ESP_HF_MSBC_ENCODED_FRAME_SIZE);
-        mic_data->data = data;
-        mic_data->buff_size = item_size;
-        mic_data->data_len = item_size;
-        vRingbufferReturnItem(s_i2s_hfp_rx_ringbuf, (void *)data);
-    } else {
-        mic_data->data_len=0;
-        mic_data->data=NULL;
+        uint8_t *ringbuf_data = (uint8_t *)xRingbufferReceiveUpTo(s_i2s_hfp_rx_ringbuf, &item_size, 10000, ESP_HF_MSBC_ENCODED_FRAME_SIZE);
+        ESP_LOGI(BT_I2S_TAG, "%s - read %d bytes from ringbuffer, expected %d", __func__, item_size, ESP_HF_MSBC_ENCODED_FRAME_SIZE);
+        
+        memcpy(mic_data, ringbuf_data, item_size);
+        vRingbufferReturnItem(s_i2s_hfp_rx_ringbuf, (void *)ringbuf_data);
     }
+    return item_size;
 }
 
 void bt_i2s_hfp_start()

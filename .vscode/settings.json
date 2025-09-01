@@ -1,6 +1,6 @@
 {
   "C_Cpp.intelliSenseEngine": "default",
-  "idf.espIdfPathWin": "C:\\Users\\walin\\esp\\v5.5\\esp-idf",
+  "idf.espIdfPathWin": "c:\\Users\\walin\\esp\\esp-idf-v5.5.1",
   "idf.toolsPathWin": "C:\\Users\\walin\\.espressif",
   "idf.pythonInstallPath": "C:\\Users\\walin\\.espressif\\tools\\idf-python\\3.11.2\\python.exe",
   "idf.portWin": "COM4",
@@ -8,6 +8,10 @@
   "files.associations": {
     "esp_audio_dec.h": "c",
     "esp_hf_defs.h": "c",
-    "esp_heap_caps.h": "c"
+    "esp_heap_caps.h": "c",
+    "array": "c",
+    "string": "c",
+    "string_view": "c",
+    "span": "c"
   }
 }
