@@ -232,44 +232,37 @@ static void bt_app_hf_client_audio_data_cb(esp_hf_sync_conn_hdl_t sync_conn_hdl,
         esp_hf_client_audio_buff_free(audio_buf);
         return;
     }
-    // decode our incoming data and send it to i2s
+
+    /* decode our incoming data and send it to i2s */
     esp_audio_dec_out_frame_t out_frame = {0};
     if (hfp_sbc_decoder(audio_buf->data, audio_buf->data_len, &out_frame)) {
         bt_i2s_hfp_write_tx_ringbuf(out_frame.buffer, out_frame.len);
-        esp_hf_client_audio_buff_free(audio_buf);
+        // esp_hf_client_audio_buff_free(audio_buf);
     } else {
         esp_hf_client_audio_buff_free(audio_buf);
         return;
     }
     
-    // fetch our msbc encoded mic data and send it to the ag
-    esp_hf_audio_buff_t *audio_data_to_send = esp_hf_client_audio_buff_alloc((uint16_t) sizeof(esp_hf_audio_buff_t));
+    /* fetch our msbc encoded mic data and send it to the ag */
+    // esp_hf_audio_buff_t *audio_data_to_send = esp_hf_client_audio_buff_alloc((uint16_t) sizeof(esp_hf_audio_buff_t));
     uint8_t *mic_data = (uint8_t *) malloc (ESP_HF_MSBC_ENCODED_FRAME_SIZE);
     size_t len = bt_i2s_hfp_read_rx_ringbuf(mic_data);
-    audio_data_to_send->buff_size = len;
-    audio_data_to_send->data_len = len;
-    audio_data_to_send->data = mic_data;
+    memcpy (audio_buf->data, mic_data, len);
+    audio_buf->data_len = len;
+    audio_buf->buff_size = len;
 
-    if (s_msbc_air_mode && audio_data_to_send->data_len > ESP_HF_MSBC_ENCODED_FRAME_SIZE) {
-        audio_data_to_send->data_len = ESP_HF_MSBC_ENCODED_FRAME_SIZE;
+    if (s_msbc_air_mode && audio_buf->data_len > ESP_HF_MSBC_ENCODED_FRAME_SIZE) {
+        audio_buf->data_len = ESP_HF_MSBC_ENCODED_FRAME_SIZE;
     }
 
-    if (audio_data_to_send->data_len == 0 || audio_data_to_send->data == NULL) {
-        esp_hf_client_audio_buff_free(audio_data_to_send);
+    if (audio_buf->data_len == 0 || audio_buf->data == NULL) {
+        esp_hf_client_audio_buff_free(audio_buf);
         return;
     }
 
-    if (audio_data_to_send->data - (uint8_t *)(audio_buf + 1) >= 0) {
-        if (esp_hf_client_audio_data_send(s_sync_conn_hdl, audio_data_to_send) != ESP_OK) {
-            esp_hf_client_audio_buff_free(audio_data_to_send);
-            ESP_LOGW(BT_HF_TAG, "%s fail to send audio data", __func__);
-        } else {
-            ESP_LOGI(BT_HF_TAG, "%s sent mic audio data len: %d, buf size: %d", __func__, audio_data_to_send->data_len, audio_data_to_send->buff_size);
-        }
-    } else {
-        ESP_LOGW(BT_HF_TAG, "%s, Not sending data. BTA_HfClientAudioDataSend in bta_hf_client_api.c expects *data %d to be > than *audio_buf %d, difference is: %d",
-                        __func__, audio_data_to_send->data, (uint8_t *)audio_buf, audio_data_to_send->data - (uint8_t *)(audio_buf + 1));
-        esp_hf_client_audio_buff_free(audio_data_to_send);
+    if (esp_hf_client_audio_data_send(s_sync_conn_hdl, audio_buf) != ESP_OK) {
+        esp_hf_client_audio_buff_free(audio_buf);
+        ESP_LOGW(BT_HF_TAG, "%s failed to send audio data", __func__);
     }
 }
 
@@ -316,7 +309,7 @@ void bt_app_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_
                 s_sync_conn_hdl = param->audio_stat.sync_conn_handle;
                 s_hfp_heap_monitor_task_running = true;
                 s_hfp_audio_connected = true;
-                xTaskCreate(&heap_monitor_task, "HeapMonitor", 4096, NULL, 5, &s_hfp_heap_monitor_task_handle);
+                // xTaskCreate(&heap_monitor_task, "HeapMonitor", 4096, NULL, 5, &s_hfp_heap_monitor_task_handle);
                 bt_i2s_hfp_start();
                 hfp_sbc_codec_start();
                 esp_hf_client_register_audio_data_callback(bt_app_hf_client_audio_data_cb);

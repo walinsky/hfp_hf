@@ -584,14 +584,15 @@ void bt_i2s_hfp_tx_task_handler(void *arg)
                 if (item_size == 0) {
                     ESP_LOGI(BT_I2S_TAG, "%s - tx ringbuffer underflowed! mode changed: RINGBUFFER_MODE_PREFETCHING", __func__);
                     s_i2s_hfp_tx_ringbuffer_mode = RINGBUFFER_MODE_PREFETCHING;
-                    break;
+                    goto Delay;
                 }
                 if (s_i2s_tx_mode == I2S_TX_MODE_HFP) { // we discard the data if we are not in hfp mode
                     i2s_channel_write(tx_chan, data, item_size, &bytes_written, portMAX_DELAY);
                 }
                 vRingbufferReturnItem(s_i2s_hfp_tx_ringbuf, (void *)data);
-            } else { 
-                vTaskDelay(pdMS_TO_TICKS(40)); // give ringbuffer some time to prefetch
+            } else {
+                Delay:
+                    vTaskDelay(pdMS_TO_TICKS(40)); // give ringbuffer some time to prefetch
             }
         } else {
             // give semaphore so s_i2s_hfp_tx_ringbuf can be safely deleted
@@ -737,7 +738,7 @@ size_t bt_i2s_hfp_read_rx_ringbuf(uint8_t *mic_data)
     size_t item_size = 0;
     if (s_i2s_hfp_rx_ringbuffer_mode != RINGBUFFER_MODE_PREFETCHING) {
         uint8_t *ringbuf_data = (uint8_t *)xRingbufferReceiveUpTo(s_i2s_hfp_rx_ringbuf, &item_size, 10000, ESP_HF_MSBC_ENCODED_FRAME_SIZE);
-        ESP_LOGI(BT_I2S_TAG, "%s - read %d bytes from ringbuffer, expected %d", __func__, item_size, ESP_HF_MSBC_ENCODED_FRAME_SIZE);
+        // ESP_LOGI(BT_I2S_TAG, "%s - read %d bytes from ringbuffer, expected %d", __func__, item_size, ESP_HF_MSBC_ENCODED_FRAME_SIZE);
         
         memcpy(mic_data, ringbuf_data, item_size);
         vRingbufferReturnItem(s_i2s_hfp_rx_ringbuf, (void *)ringbuf_data);
