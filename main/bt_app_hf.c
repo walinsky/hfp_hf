@@ -250,7 +250,7 @@ static void bt_app_hf_client_audio_data_cb(esp_hf_sync_conn_hdl_t sync_conn_hdl,
     memcpy (audio_buf->data, mic_data, len);
     audio_buf->data_len = len;
     audio_buf->buff_size = len;
-
+    free (mic_data);
     if (s_msbc_air_mode && audio_buf->data_len > ESP_HF_MSBC_ENCODED_FRAME_SIZE) {
         audio_buf->data_len = ESP_HF_MSBC_ENCODED_FRAME_SIZE;
     }
@@ -309,7 +309,7 @@ void bt_app_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_
                 s_sync_conn_hdl = param->audio_stat.sync_conn_handle;
                 s_hfp_heap_monitor_task_running = true;
                 s_hfp_audio_connected = true;
-                // xTaskCreate(&heap_monitor_task, "HeapMonitor", 4096, NULL, 5, &s_hfp_heap_monitor_task_handle);
+                xTaskCreate(&heap_monitor_task, "HeapMonitor", 4096, NULL, 5, &s_hfp_heap_monitor_task_handle);
                 bt_i2s_hfp_start();
                 hfp_sbc_codec_start();
                 esp_hf_client_register_audio_data_callback(bt_app_hf_client_audio_data_cb);
@@ -498,9 +498,9 @@ bool hfp_sbc_decoder(uint8_t *data, uint16_t data_len, esp_audio_dec_out_frame_t
 
     int dec_ret = 0;
     dec_ret = esp_sbc_dec_decode(hfp_dec_handle, &in_frame, out_frame, &info);
-    if (hfp_sbc_decoder_counter == 0) {
-        ESP_LOGI(BT_HF_TAG, "%s decoded frame sample rate: %d, bits per sample: %d, channel(s): %d, bitrate: %d, frame size: %d",
-             __func__, info.sample_rate, info.bits_per_sample, info.channel, info.bitrate, info.frame_size);
+    if (hfp_sbc_decoder_counter % 1000 == 0) {
+        ESP_LOGI(BT_HF_TAG, "%s decoded #%d frame sample rate: %d, bits per sample: %d, channel(s): %d, bitrate: %d, frame size: %d",
+             __func__, hfp_sbc_decoder_counter, info.sample_rate, info.bits_per_sample, info.channel, info.bitrate, info.frame_size);
     }
     hfp_sbc_decoder_counter++;
     if (dec_ret != ESP_AUDIO_ERR_OK) {
@@ -533,7 +533,7 @@ bool hfp_sbc_encoder(uint8_t *data, uint16_t data_len, esp_audio_enc_out_frame_t
     out_frame->len = outbuf_sz;
     int enc_ret = esp_sbc_enc_process(hfp_enc_handle, &in_frame, out_frame);
     if (enc_ret != ESP_AUDIO_ERR_OK) {
-        ESP_LOGE(BT_HF_TAG, "%s, could not get encode", __func__);
+        ESP_LOGE(BT_HF_TAG, "%s, could not encode", __func__);
         free(inbuf);
         free(outbuf);
         return false;

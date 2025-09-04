@@ -609,7 +609,7 @@ void bt_i2s_hfp_tx_task_handler(void *arg)
 void bt_i2s_hfp_rx_task_handler(void *arg)
 {
     // Codec (code & decode) for HFP is mSBC with specific parameters.
-    // It transfers 240 Bytes every 7.5 ms. So we need to create a 240 Byte (120 16bit mono samples) output buffer every 7.5ms.
+    // mSBC transfers 240 (unencoded) Bytes every 7.5 ms. So we need to create a 240 Byte (120 16bit mono samples) output buffer every 7.5ms.
     // Our mems microphone on I2S is 32bit; we get both left and right channels. This totals 64 bits, or 8 bytes, per sample.
     // So for every 64bit (8 byte) input sample we get a 16bit (2 byte) output sample
     const size_t item_size_upto = 120 * 8; // input sample bytes
@@ -706,10 +706,10 @@ void bt_i2s_hfp_write_rx_ringbuf(unsigned char *data, uint32_t size)
     BaseType_t done = pdFALSE;
 
     if (s_i2s_hfp_rx_ringbuffer_mode == RINGBUFFER_MODE_DROPPING) {
-        // ESP_LOGW(BT_I2S_TAG, "%s - hfp rx ringbuffer is full, drop this packet!", __func__);
+        ESP_LOGW(BT_I2S_TAG, "%s - hfp rx ringbuffer is full, drop this packet!", __func__);
         vRingbufferGetInfo(s_i2s_hfp_rx_ringbuf, NULL, NULL, NULL, NULL, &item_size);
         if (item_size <= RINGBUF_HFP_RX_HIGHEST_WATER_LEVEL) {
-            // ESP_LOGI(BT_I2S_TAG, "%s - hfp rx ringbuffer data decreased! mode changed: RINGBUFFER_MODE_PROCESSING", __func__);
+            ESP_LOGI(BT_I2S_TAG, "%s - hfp rx ringbuffer data decreased! mode changed: RINGBUFFER_MODE_PROCESSING", __func__);
             s_i2s_hfp_rx_ringbuffer_mode = RINGBUFFER_MODE_PROCESSING;
         }
         return;
