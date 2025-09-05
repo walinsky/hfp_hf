@@ -18,8 +18,6 @@
  * @brief     callback function for HF client
  */
 void bt_app_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_t *param);
-void hfp_sbc_codec_start();
-void hfp_sbc_codec_stop();
 bool hfp_sbc_decoder(uint8_t *data, uint16_t data_len, esp_audio_dec_out_frame_t *out_frame);
 bool hfp_sbc_encoder(uint8_t *data, uint16_t data_len, esp_audio_enc_out_frame_t *out_frame);
 

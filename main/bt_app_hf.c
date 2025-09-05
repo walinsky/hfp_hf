@@ -200,27 +200,8 @@ static bool s_hfp_audio_connected = false;
 // QueueHandle_t s_audio_buff_queue = NULL;
 // static int s_audio_buff_cnt = 0;
 
-/* 
-    codecs
-*/
-esp_sbc_dec_cfg_t hfp_dec_cfg = {
-    // .ch_num = 1,
-    .enable_plc = true,
-    .sbc_mode = ESP_SBC_MODE_MSBC,
-};
-void *hfp_dec_handle = NULL;
-esp_sbc_enc_config_t hfp_enc_cfg = ESP_SBC_MSBC_ENC_CONFIG_DEFAULT();
-// esp_sbc_enc_config_t hfp_enc_cfg = {
-//     .allocation_method = ESP_SBC_ALLOC_SNR,
-//     .bitpool = ESP_HF_MSBC_BITPOOL,
-//     .block_length = ESP_HF_MSBC_BLOCK_LENGTH,
-//     .sub_bands_num = ESP_HF_MSBC_SUBBANDS,
-//     .sample_rate = 16000,
-//     .bits_per_sample = 16,
-//     .ch_mode = ESP_SBC_CH_MODE_MONO,
-//     .sbc_mode = ESP_SBC_MODE_MSBC,
-// };
-void *hfp_enc_handle = NULL;
+
+
 
 static void bt_app_hf_client_audio_data_cb(esp_hf_sync_conn_hdl_t sync_conn_hdl, esp_hf_audio_buff_t *audio_buf, bool is_bad_frame)
 {
@@ -311,7 +292,6 @@ void bt_app_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_
                 s_hfp_audio_connected = true;
                 xTaskCreate(&heap_monitor_task, "HeapMonitor", 4096, NULL, 5, &s_hfp_heap_monitor_task_handle);
                 bt_i2s_hfp_start();
-                hfp_sbc_codec_start();
                 esp_hf_client_register_audio_data_callback(bt_app_hf_client_audio_data_cb);
             } else if (param->audio_stat.state == ESP_HF_CLIENT_AUDIO_STATE_DISCONNECTED) {
                 ESP_LOGI(BT_HF_TAG, "%s ESP_HF_CLIENT_AUDIO_STATE_DISCONNECTED", __func__);
@@ -320,7 +300,6 @@ void bt_app_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_
                 s_hfp_audio_connected = false;
                 static TaskHandle_t s_hfp_kill_audio_task_handle;
                 xTaskCreate(&kill_hfp_audio_task, "Kill HPF AUDIO", 4096, NULL, 5, &s_hfp_kill_audio_task_handle);
-
             }
     #endif /* #if CONFIG_BT_HFP_AUDIO_DATA_PATH_HCI && CONFIG_BT_HFP_USE_EXTERNAL_CODEC */
             break;
@@ -482,9 +461,9 @@ void bt_app_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_
 int hfp_sbc_decoder_counter = 0;
 bool hfp_sbc_decoder(uint8_t *data, uint16_t data_len, esp_audio_dec_out_frame_t *out_frame)
 {
-    int inbuf_sz = data_len;
+    // int inbuf_sz = data_len;
     int outbuf_sz = 240;
-    uint8_t *inbuf = malloc(inbuf_sz);
+    uint8_t *inbuf = malloc(data_len);
     uint8_t *outbuf = malloc(outbuf_sz);
     esp_audio_dec_in_raw_t in_frame = {0};
     esp_audio_dec_info_t info = {0};
@@ -496,6 +475,16 @@ bool hfp_sbc_decoder(uint8_t *data, uint16_t data_len, esp_audio_dec_out_frame_t
     out_frame->buffer = outbuf;
     out_frame->len = outbuf_sz;
 
+    esp_sbc_dec_cfg_t hfp_dec_cfg = {
+        // .ch_num = 1,
+        .enable_plc = true,
+        .sbc_mode = ESP_SBC_MODE_MSBC,
+    };
+    void *hfp_dec_handle = NULL;
+
+    if (esp_sbc_dec_open(&hfp_dec_cfg, sizeof(esp_sbc_dec_cfg_t), &hfp_dec_handle) != ESP_AUDIO_ERR_OK) {
+        ESP_LOGE(BT_HF_TAG, "%s, could not open sbc decoder", __func__);
+    };
     int dec_ret = 0;
     dec_ret = esp_sbc_dec_decode(hfp_dec_handle, &in_frame, out_frame, &info);
     if (hfp_sbc_decoder_counter % 1000 == 0) {
@@ -509,7 +498,9 @@ bool hfp_sbc_decoder(uint8_t *data, uint16_t data_len, esp_audio_dec_out_frame_t
         free(outbuf);
         return false;
     };
-    
+    if (esp_sbc_dec_close(hfp_dec_handle) != ESP_AUDIO_ERR_OK) {
+        ESP_LOGE(BT_HF_TAG, "%s, could not close sbc decoder", __func__);
+    };
     free(inbuf);
     free(outbuf);
     return true;
@@ -520,6 +511,11 @@ bool hfp_sbc_encoder(uint8_t *data, uint16_t data_len, esp_audio_enc_out_frame_t
 {
     int inbuf_sz = 0;
     int outbuf_sz = 0;
+    esp_sbc_enc_config_t hfp_enc_cfg = ESP_SBC_MSBC_ENC_CONFIG_DEFAULT();
+    void *hfp_enc_handle = NULL;
+    if (esp_sbc_enc_open(&hfp_enc_cfg, sizeof(esp_sbc_enc_config_t), &hfp_enc_handle) != ESP_AUDIO_ERR_OK) {
+        ESP_LOGE(BT_HF_TAG, "%s, could not open sbc encoder", __func__);
+    };
     if (esp_sbc_enc_get_frame_size(hfp_enc_handle, &inbuf_sz, &outbuf_sz) != ESP_AUDIO_ERR_OK) {
         ESP_LOGE(BT_HF_TAG, "%s, could not get frame size", __func__);
         return false;
@@ -532,45 +528,25 @@ bool hfp_sbc_encoder(uint8_t *data, uint16_t data_len, esp_audio_enc_out_frame_t
     out_frame->buffer = outbuf;
     out_frame->len = outbuf_sz;
     int enc_ret = esp_sbc_enc_process(hfp_enc_handle, &in_frame, out_frame);
+    hfp_sbc_encoder_counter++;
     if (enc_ret != ESP_AUDIO_ERR_OK) {
         ESP_LOGE(BT_HF_TAG, "%s, could not encode", __func__);
         free(inbuf);
         free(outbuf);
         return false;
     } else {
-        // ESP_LOGI(BT_HF_TAG, "%s, encoded msbc data data len: %d encoded size: %d data: %p",__func__, out_frame->len, out_frame->encoded_bytes, out_frame->buffer);   
-        if (hfp_sbc_encoder_counter == 0) {
+        if (hfp_sbc_encoder_counter % 1000 == 0) {
             esp_audio_enc_info_t *enc_info = malloc(sizeof *enc_info);
             esp_sbc_enc_get_info(hfp_enc_handle, enc_info);
-            ESP_LOGI(BT_HF_TAG, "%s encoded frame sample rate: %d, bits per sample: %d, channel(s): %d, bitrate: %d",
-                    __func__, enc_info->sample_rate, enc_info->bits_per_sample, enc_info->channel, enc_info->bitrate);
+            ESP_LOGI(BT_HF_TAG, "%s encoded #%d frame sample rate: %d, bits per sample: %d, channel(s): %d, bitrate: %d",
+                    __func__, hfp_sbc_encoder_counter, enc_info->sample_rate, enc_info->bits_per_sample, enc_info->channel, enc_info->bitrate);
             free(enc_info);
         }
-    hfp_sbc_encoder_counter++;
-        
     }
+    esp_sbc_enc_close(hfp_enc_handle);
     free(inbuf);
     free(outbuf);
     return true;
-}
-
-void hfp_sbc_codec_start()
-{
-    if (esp_sbc_enc_open(&hfp_enc_cfg, sizeof(esp_sbc_enc_config_t), &hfp_enc_handle) != ESP_AUDIO_ERR_OK) {
-        ESP_LOGE(BT_HF_TAG, "%s, could not open sbc encoder", __func__);
-    };
-        if (esp_sbc_dec_open(&hfp_dec_cfg, sizeof(esp_sbc_dec_cfg_t), &hfp_dec_handle) != ESP_AUDIO_ERR_OK) {
-        ESP_LOGE(BT_HF_TAG, "%s, could not open sbc decoder", __func__);
-    };
-}
-
-void hfp_sbc_codec_stop()
-{
-    esp_sbc_enc_close(hfp_enc_handle);
- 
-    if (esp_sbc_dec_close(hfp_dec_handle) != ESP_AUDIO_ERR_OK) {
-        ESP_LOGE(BT_HF_TAG, "%s, could not close sbc decoder", __func__);
-    };
 }
 
 static void heap_monitor_task(void *pvParameters) {
@@ -589,8 +565,6 @@ static void heap_monitor_task(void *pvParameters) {
 static void kill_hfp_audio_task(void *pvParameters) {
     ESP_LOGI(BT_HF_TAG, "%s stopping I2S hfp", __func__);
     bt_i2s_hfp_stop();
-    ESP_LOGI(BT_HF_TAG, "%s stopping codec", __func__);
-    hfp_sbc_codec_stop();
     ESP_LOGI(BT_HF_TAG, "%s stopping monitor task", __func__);
     s_hfp_heap_monitor_task_running = false;
     // vTaskDelete(s_hfp_heap_monitor_task_handle);

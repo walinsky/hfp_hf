@@ -161,7 +161,7 @@ i2s_std_slot_config_t bt_i2s_get_hfp_tx_slot_cfg(void)
     // decoded frame sample rate: 16000, bits per sample: 16, channel(s): 1, bitrate: 60800, frame size: 17
     // I2S_STD_PCM_SLOT_DEFAULT_CONFIG, I2S_STD_MSB_SLOT_DEFAULT_CONFIG, or I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG
     i2s_std_slot_config_t hfp_slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(HFP_I2S_DATA_BIT_WIDTH, I2S_SLOT_MODE_MONO);
-    // hfp_slot_cfg.slot_mask = I2S_STD_SLOT_BOTH;
+    hfp_slot_cfg.slot_mask = I2S_STD_SLOT_BOTH;
     ESP_LOGI(BT_I2S_TAG, "reconfiguring hfp tx slot to data bit width:  %d", HFP_I2S_DATA_BIT_WIDTH);
     return hfp_slot_cfg;
 }
