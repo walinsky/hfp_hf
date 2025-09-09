@@ -524,6 +524,7 @@ void bt_i2s_hfp_task_init(void)
     }
     s_bt_i2s_hfp_tx_task_running = true;
     xTaskCreate(bt_i2s_hfp_tx_task_handler, "BtI2ShfpTxTask", 4096, NULL, configMAX_PRIORITIES - 3, &s_bt_i2s_hfp_tx_task_handle);
+    
     s_i2s_hfp_rx_ringbuffer_mode = RINGBUFFER_MODE_PREFETCHING;
     s_i2s_rx_mode = I2S_RX_MODE_HFP;
     if ((s_i2s_hfp_rx_ringbuf = xRingbufferCreate(RINGBUF_HFP_RX_HIGHEST_WATER_LEVEL, RINGBUF_TYPE_BYTEBUF)) == NULL) {
@@ -661,6 +662,10 @@ void bt_i2s_hfp_rx_task_handler(void *arg)
  */
 void bt_i2s_hfp_write_tx_ringbuf(const uint8_t *data, uint32_t size)
 {
+    if (s_i2s_hfp_tx_ringbuf == NULL) {// ringbuffer hasn't been set up yet
+        return;
+    }
+    
     size_t item_size = 0;
     BaseType_t done = pdFALSE;
 
@@ -674,7 +679,7 @@ void bt_i2s_hfp_write_tx_ringbuf(const uint8_t *data, uint32_t size)
         }
         return;
     }
-    // ESP_LOGI(BT_I2S_TAG, "%s - sending tx size %lu to the ringbuffer", __func__, size);
+
     done = xRingbufferSend(s_i2s_hfp_tx_ringbuf, (void *)data, size, (TickType_t)0);
     // ESP_LOGI(BT_I2S_TAG, "%s - hfp tx ringbuffer size: %d", __func__, item_size);
 
