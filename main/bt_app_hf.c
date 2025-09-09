@@ -214,35 +214,30 @@ static void bt_app_hf_client_audio_data_cb(esp_hf_sync_conn_hdl_t sync_conn_hdl,
         return;
     }
 
-    /* decode our incoming data and send it to i2s */
+    /* decode our incoming data and send it to i2s tx ringbuffer */
     esp_audio_dec_out_frame_t out_frame = {0};
     if (hfp_sbc_decoder(audio_buf->data, audio_buf->data_len, &out_frame)) {
         bt_i2s_hfp_write_tx_ringbuf(out_frame.buffer, out_frame.len);
-        // esp_hf_client_audio_buff_free(audio_buf);
+        esp_hf_client_audio_buff_free(audio_buf);
     } else {
         esp_hf_client_audio_buff_free(audio_buf);
-        return;
     }
     
     /* fetch our msbc encoded mic data and send it to the ag */
-    // esp_hf_audio_buff_t *audio_data_to_send = esp_hf_client_audio_buff_alloc((uint16_t) sizeof(esp_hf_audio_buff_t));
     uint8_t *mic_data = (uint8_t *) malloc (ESP_HF_MSBC_ENCODED_FRAME_SIZE);
-    size_t len = bt_i2s_hfp_read_rx_ringbuf(mic_data);
-    memcpy (audio_buf->data, mic_data, len);
-    audio_buf->data_len = len;
-    audio_buf->buff_size = len;
-    free (mic_data);
-    if (s_msbc_air_mode && audio_buf->data_len > ESP_HF_MSBC_ENCODED_FRAME_SIZE) {
-        audio_buf->data_len = ESP_HF_MSBC_ENCODED_FRAME_SIZE;
-    }
-
-    if (audio_buf->data_len == 0 || audio_buf->data == NULL) {
-        esp_hf_client_audio_buff_free(audio_buf);
+    size_t mic_data_len = bt_i2s_hfp_read_rx_ringbuf(mic_data);
+    if (mic_data_len == 0 || mic_data == NULL) {
         return;
     }
-
-    if (esp_hf_client_audio_data_send(s_sync_conn_hdl, audio_buf) != ESP_OK) {
-        esp_hf_client_audio_buff_free(audio_buf);
+    esp_hf_audio_buff_t *audio_data_to_send = esp_hf_client_audio_buff_alloc((uint16_t) mic_data_len);
+    memcpy (audio_data_to_send->data, mic_data, mic_data_len);
+    audio_data_to_send->data_len = mic_data_len;
+    free (mic_data);
+    if (s_msbc_air_mode && audio_data_to_send->data_len > ESP_HF_MSBC_ENCODED_FRAME_SIZE) {
+        audio_data_to_send->data_len = ESP_HF_MSBC_ENCODED_FRAME_SIZE;
+    }
+    if (esp_hf_client_audio_data_send(s_sync_conn_hdl, audio_data_to_send) != ESP_OK) {
+        esp_hf_client_audio_buff_free(audio_data_to_send);
         ESP_LOGW(BT_HF_TAG, "%s failed to send audio data", __func__);
     }
 }
@@ -554,7 +549,7 @@ static void heap_monitor_task(void *pvParameters) {
         // Get the number of free bytes in the heap
         int heap_size = esp_get_free_heap_size();
         ESP_LOGI(BT_HF_TAG, "%s, heap size: %d",__func__, heap_size);   
-        vTaskDelay(pdMS_TO_TICKS(500));
+        vTaskDelay(pdMS_TO_TICKS(1000));
         if (!s_hfp_heap_monitor_task_running){
             ESP_LOGI(BT_HF_TAG, "%s, deleting myself",__func__); 
             vTaskDelete(NULL);
