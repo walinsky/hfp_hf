@@ -202,7 +202,7 @@ static bool s_hfp_audio_connected = false;
 
 
 
-
+static int s_audio_callback_cnt = 0;
 static void bt_app_hf_client_audio_data_cb(esp_hf_sync_conn_hdl_t sync_conn_hdl, esp_hf_audio_buff_t *audio_buf, bool is_bad_frame)
 {
     if (!s_hfp_audio_connected) {
@@ -240,6 +240,10 @@ static void bt_app_hf_client_audio_data_cb(esp_hf_sync_conn_hdl_t sync_conn_hdl,
         esp_hf_client_audio_buff_free(audio_data_to_send);
         ESP_LOGW(BT_HF_TAG, "%s failed to send audio data", __func__);
     }
+    if (s_audio_callback_cnt % 1000 == 0) {
+        esp_hf_client_pkt_stat_nums_get(sync_conn_hdl);
+    }
+    s_audio_callback_cnt++;
 }
 
 
@@ -433,7 +437,19 @@ void bt_app_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_
         }
         case ESP_HF_CLIENT_PKT_STAT_NUMS_GET_EVT:
         {
-            ESP_LOGE(BT_HF_TAG, "ESP_HF_CLIENT_PKT_STAT_NUMS_GET_EVT: %d", event);
+            // struct hf_client_pkt_status_nums {
+            //     uint32_t rx_total;        /*!< the total number of packets received */
+            //     uint32_t rx_correct;      /*!< the total number of packets data correctly received */
+            //     uint32_t rx_err;          /*!< the total number of packets data with possible invalid */
+            //     uint32_t rx_none;         /*!< the total number of packets data no received */
+            //     uint32_t rx_lost;         /*!< the total number of packets data partially lost */
+            //     uint32_t tx_total;        /*!< the total number of packets send */
+            //     uint32_t tx_discarded;    /*!< the total number of packets send lost */
+            // } pkt_nums;                   /*!< HF callback param of ESP_HF_CLIENT_PKT_STAT_NUMS_GET_EVT */
+
+            ESP_LOGI(BT_HF_TAG, "total packets: %d, received ok: %d, received err: %d, received none: %d, received lost: %d, sent: %d, sent lost: %d", 
+                param->pkt_nums.rx_total, param->pkt_nums.rx_correct, param->pkt_nums.rx_err, param->pkt_nums.rx_none, param->pkt_nums.rx_lost,
+                param->pkt_nums.tx_total, param->pkt_nums.tx_discarded);
             break;
         }
         case ESP_HF_CLIENT_PROF_STATE_EVT:
