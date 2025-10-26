@@ -28,17 +28,14 @@
 #include "sdkconfig.h"
 
 #include "esp_sbc_def.h"
-// #include "esp_audio_dec.h"
 #include "esp_audio_dec_reg.h"
-// #include "esp_audio_enc.h"
 #include "esp_audio_enc_reg.h"
 #include "esp_sbc_dec.h"
 #include "esp_sbc_enc.h"
 #include "esp_hf_defs.h"
 
 #include "bt_i2s.h"
-
-
+#include "codec.h"
 
 
 const char *c_hf_evt_str[] = {
@@ -209,33 +206,34 @@ static void bt_app_hf_client_audio_data_cb(esp_hf_sync_conn_hdl_t sync_conn_hdl,
         esp_hf_client_audio_buff_free(audio_buf);
         return;
     }
-    if (is_bad_frame) {
-        esp_hf_client_audio_buff_free(audio_buf);
-        return;
+    
+    if (!is_bad_frame) {
+        /* decode our incoming data and send it to i2s tx ringbuffer */
+        uint8_t *decoded_buffer = malloc(MSBC_FRAME_SAMPLES * 2);
+        size_t decoded_len;
+        if (msbc_dec_data(audio_buf->data, audio_buf->data_len, 
+                            decoded_buffer, &decoded_len) == 0) {
+            bt_i2s_hfp_write_tx_ringbuf(decoded_buffer, decoded_len);
+        }
+        free(decoded_buffer);
     }
-
-    /* decode our incoming data and send it to i2s tx ringbuffer */
-    esp_audio_dec_out_frame_t out_frame = {0};
-    if (hfp_sbc_decoder(audio_buf->data, audio_buf->data_len, &out_frame)) {
-        bt_i2s_hfp_write_tx_ringbuf(out_frame.buffer, out_frame.len);
-        esp_hf_client_audio_buff_free(audio_buf);
-    } else {
-        esp_hf_client_audio_buff_free(audio_buf);
-    }
+    esp_hf_client_audio_buff_free(audio_buf);
     
     /* fetch our msbc encoded mic data and send it to the ag */
-    uint8_t *mic_data = (uint8_t *) malloc (ESP_HF_MSBC_ENCODED_FRAME_SIZE);
+    uint8_t *mic_data = malloc(ESP_HF_MSBC_ENCODED_FRAME_SIZE);
+    // uint8_t *mic_data = (uint8_t *) malloc (ESP_HF_MSBC_ENCODED_FRAME_SIZE);
     size_t mic_data_len = bt_i2s_hfp_read_rx_ringbuf(mic_data);
-    if (mic_data_len == 0 || mic_data == NULL) {
-        return;
-    }
-    esp_hf_audio_buff_t *audio_data_to_send = esp_hf_client_audio_buff_alloc((uint16_t) mic_data_len);
-    memcpy (audio_data_to_send->data, mic_data, mic_data_len);
-    audio_data_to_send->data_len = mic_data_len;
+    // if (mic_data_len == 0) {
+    //     free(mic_data);
+    //     return;
+    // }
+    esp_hf_audio_buff_t *audio_data_to_send = esp_hf_client_audio_buff_alloc((uint16_t) ESP_HF_MSBC_ENCODED_FRAME_SIZE);
+    memcpy (audio_data_to_send->data, mic_data, ESP_HF_MSBC_ENCODED_FRAME_SIZE);
+    audio_data_to_send->data_len = ESP_HF_MSBC_ENCODED_FRAME_SIZE;
     free (mic_data);
-    if (s_msbc_air_mode && audio_data_to_send->data_len > ESP_HF_MSBC_ENCODED_FRAME_SIZE) {
-        audio_data_to_send->data_len = ESP_HF_MSBC_ENCODED_FRAME_SIZE;
-    }
+    // if (s_msbc_air_mode && audio_data_to_send->data_len > ESP_HF_MSBC_ENCODED_FRAME_SIZE) {
+    //     audio_data_to_send->data_len = ESP_HF_MSBC_ENCODED_FRAME_SIZE;
+    // }
     if (esp_hf_client_audio_data_send(s_sync_conn_hdl, audio_data_to_send) != ESP_OK) {
         esp_hf_client_audio_buff_free(audio_data_to_send);
         ESP_LOGW(BT_HF_TAG, "%s failed to send audio data", __func__);
@@ -437,16 +435,6 @@ void bt_app_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_
         }
         case ESP_HF_CLIENT_PKT_STAT_NUMS_GET_EVT:
         {
-            // struct hf_client_pkt_status_nums {
-            //     uint32_t rx_total;        /*!< the total number of packets received */
-            //     uint32_t rx_correct;      /*!< the total number of packets data correctly received */
-            //     uint32_t rx_err;          /*!< the total number of packets data with possible invalid */
-            //     uint32_t rx_none;         /*!< the total number of packets data no received */
-            //     uint32_t rx_lost;         /*!< the total number of packets data partially lost */
-            //     uint32_t tx_total;        /*!< the total number of packets send */
-            //     uint32_t tx_discarded;    /*!< the total number of packets send lost */
-            // } pkt_nums;                   /*!< HF callback param of ESP_HF_CLIENT_PKT_STAT_NUMS_GET_EVT */
-
             ESP_LOGI(BT_HF_TAG, "total packets: %d, received ok: %d, received err: %d, received none: %d, received lost: %d, sent: %d, sent lost: %d", 
                 param->pkt_nums.rx_total, param->pkt_nums.rx_correct, param->pkt_nums.rx_err, param->pkt_nums.rx_none, param->pkt_nums.rx_lost,
                 param->pkt_nums.tx_total, param->pkt_nums.tx_discarded);
@@ -467,97 +455,6 @@ void bt_app_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_
             ESP_LOGE(BT_HF_TAG, "HF_CLIENT EVT: %d", event);
             break;
     }
-}
-
-int hfp_sbc_decoder_counter = 0;
-bool hfp_sbc_decoder(uint8_t *data, uint16_t data_len, esp_audio_dec_out_frame_t *out_frame)
-{
-    // int inbuf_sz = data_len;
-    int outbuf_sz = 240;
-    uint8_t *inbuf = malloc(data_len);
-    uint8_t *outbuf = malloc(outbuf_sz);
-    esp_audio_dec_in_raw_t in_frame = {0};
-    esp_audio_dec_info_t info = {0};
-
-    in_frame.buffer = data;
-    in_frame.len = data_len;
-    in_frame.consumed = 0;
-    in_frame.frame_recover = ESP_AUDIO_DEC_RECOVERY_NONE;
-    out_frame->buffer = outbuf;
-    out_frame->len = outbuf_sz;
-
-    esp_sbc_dec_cfg_t hfp_dec_cfg = {
-        // .ch_num = 1,
-        .enable_plc = true,
-        .sbc_mode = ESP_SBC_MODE_MSBC,
-    };
-    void *hfp_dec_handle = NULL;
-
-    if (esp_sbc_dec_open(&hfp_dec_cfg, sizeof(esp_sbc_dec_cfg_t), &hfp_dec_handle) != ESP_AUDIO_ERR_OK) {
-        ESP_LOGE(BT_HF_TAG, "%s, could not open sbc decoder", __func__);
-    };
-    int dec_ret = 0;
-    dec_ret = esp_sbc_dec_decode(hfp_dec_handle, &in_frame, out_frame, &info);
-    if (hfp_sbc_decoder_counter % 1000 == 0) {
-        ESP_LOGI(BT_HF_TAG, "%s decoded #%d frame sample rate: %d, bits per sample: %d, channel(s): %d, bitrate: %d, frame size: %d",
-             __func__, hfp_sbc_decoder_counter, info.sample_rate, info.bits_per_sample, info.channel, info.bitrate, info.frame_size);
-    }
-    hfp_sbc_decoder_counter++;
-    if (dec_ret != ESP_AUDIO_ERR_OK) {
-        ESP_LOGE(BT_HF_TAG, "could not decode: %d", dec_ret);
-        free(inbuf);
-        free(outbuf);
-        return false;
-    };
-    if (esp_sbc_dec_close(hfp_dec_handle) != ESP_AUDIO_ERR_OK) {
-        ESP_LOGE(BT_HF_TAG, "%s, could not close sbc decoder", __func__);
-    };
-    free(inbuf);
-    free(outbuf);
-    return true;
-}
-
-int hfp_sbc_encoder_counter = 0;
-bool hfp_sbc_encoder(uint8_t *data, uint16_t data_len, esp_audio_enc_out_frame_t *out_frame)
-{
-    int inbuf_sz = 0;
-    int outbuf_sz = 0;
-    esp_sbc_enc_config_t hfp_enc_cfg = ESP_SBC_MSBC_ENC_CONFIG_DEFAULT();
-    void *hfp_enc_handle = NULL;
-    if (esp_sbc_enc_open(&hfp_enc_cfg, sizeof(esp_sbc_enc_config_t), &hfp_enc_handle) != ESP_AUDIO_ERR_OK) {
-        ESP_LOGE(BT_HF_TAG, "%s, could not open sbc encoder", __func__);
-    };
-    if (esp_sbc_enc_get_frame_size(hfp_enc_handle, &inbuf_sz, &outbuf_sz) != ESP_AUDIO_ERR_OK) {
-        ESP_LOGE(BT_HF_TAG, "%s, could not get frame size", __func__);
-        return false;
-    };
-    uint8_t *inbuf = calloc(1, inbuf_sz);
-    uint8_t *outbuf = calloc(1, outbuf_sz);
-    esp_audio_enc_in_frame_t in_frame = {0};
-    in_frame.buffer = data;
-    in_frame.len = data_len;
-    out_frame->buffer = outbuf;
-    out_frame->len = outbuf_sz;
-    int enc_ret = esp_sbc_enc_process(hfp_enc_handle, &in_frame, out_frame);
-    hfp_sbc_encoder_counter++;
-    if (enc_ret != ESP_AUDIO_ERR_OK) {
-        ESP_LOGE(BT_HF_TAG, "%s, could not encode", __func__);
-        free(inbuf);
-        free(outbuf);
-        return false;
-    } else {
-        if (hfp_sbc_encoder_counter % 1000 == 0) {
-            esp_audio_enc_info_t *enc_info = malloc(sizeof *enc_info);
-            esp_sbc_enc_get_info(hfp_enc_handle, enc_info);
-            ESP_LOGI(BT_HF_TAG, "%s encoded #%d frame sample rate: %d, bits per sample: %d, channel(s): %d, bitrate: %d",
-                    __func__, hfp_sbc_encoder_counter, enc_info->sample_rate, enc_info->bits_per_sample, enc_info->channel, enc_info->bitrate);
-            free(enc_info);
-        }
-    }
-    esp_sbc_enc_close(hfp_enc_handle);
-    free(inbuf);
-    free(outbuf);
-    return true;
 }
 
 static void heap_monitor_task(void *pvParameters) {

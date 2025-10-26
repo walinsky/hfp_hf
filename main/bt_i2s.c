@@ -4,16 +4,6 @@
 #include <string.h>
 #include <inttypes.h>
 #include "esp_log.h"
-
-#include "bt_i2s.h"
-#include "bt_app_hf.h"
-#include "esp_timer.h"
-// #include "esp_bt_main.h"
-// #include "esp_bt_device.h"
-// #include "esp_gap_bt_api.h"
-// #include "esp_a2dp_api.h"
-// #include "esp_avrc_api.h"
-
 #include <xtensa_api.h>
 #include "freertos/FreeRTOSConfig.h"
 #include "freertos/FreeRTOS.h"
@@ -21,21 +11,26 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "freertos/ringbuf.h"
-
 #include "sys/lock.h"
+#include "bt_i2s.h"
+#include "bt_app_hf.h"
+#include "codec.h"
+#include "esp_timer.h"
 
 #define BT_I2S_TAG "BT_I2S"
 
-#define HFP_SAMPLE_RATE                 16000
-#define HFP_I2S_DATA_BIT_WIDTH          I2S_DATA_BIT_WIDTH_16BIT
-#define A2DP_STANDARD_SAMPLE_RATE       44100
-#define A2DP_I2S_DATA_BIT_WIDTH         I2S_DATA_BIT_WIDTH_16BIT
-#define RINGBUF_HIGHEST_WATER_LEVEL     (32 * 1024)
-#define RINGBUF_PREFETCH_WATER_LEVEL    (20 * 1024)
-#define RINGBUF_HFP_TX_HIGHEST_WATER_LEVEL     (32 * 240)
-#define RINGBUF_HFP_TX_PREFETCH_WATER_LEVEL    (20 * 240)
-#define RINGBUF_HFP_RX_HIGHEST_WATER_LEVEL     (32 * ESP_HF_MSBC_ENCODED_FRAME_SIZE)
-#define RINGBUF_HFP_RX_PREFETCH_WATER_LEVEL    (20 * ESP_HF_MSBC_ENCODED_FRAME_SIZE)
+#define MSBC_FRAME_SAMPLES                      120  // mSBC uses 120 samples per frame (240 bytes)
+#define HFP_SAMPLE_RATE                         16000
+#define HFP_I2S_DATA_BIT_WIDTH                  I2S_DATA_BIT_WIDTH_16BIT
+#define A2DP_STANDARD_SAMPLE_RATE               44100
+#define A2DP_I2S_DATA_BIT_WIDTH                 I2S_DATA_BIT_WIDTH_16BIT
+#define RINGBUF_HIGHEST_WATER_LEVEL             (32 * 1024)
+#define RINGBUF_PREFETCH_WATER_LEVEL            (20 * 1024)
+#define RINGBUF_HFP_TX_HIGHEST_WATER_LEVEL      (32 * MSBC_FRAME_SAMPLES * 2)
+#define RINGBUF_HFP_TX_PREFETCH_WATER_LEVEL     (20 * MSBC_FRAME_SAMPLES * 2)
+#define RINGBUF_HFP_RX_HIGHEST_WATER_LEVEL      (32 * ESP_HF_MSBC_ENCODED_FRAME_SIZE)
+#define RINGBUF_HFP_RX_PREFETCH_WATER_LEVEL     (20 * ESP_HF_MSBC_ENCODED_FRAME_SIZE)
+
 
 enum {
     RINGBUFFER_MODE_PROCESSING,    /* ringbuffer is buffering incoming audio data, I2S is working */
@@ -162,7 +157,7 @@ i2s_std_slot_config_t bt_i2s_get_hfp_tx_slot_cfg(void)
     // I2S_STD_PCM_SLOT_DEFAULT_CONFIG, I2S_STD_MSB_SLOT_DEFAULT_CONFIG, or I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG
     i2s_std_slot_config_t hfp_slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(HFP_I2S_DATA_BIT_WIDTH, I2S_SLOT_MODE_MONO);
     // hfp_slot_cfg.msb_right = true;
-    // hfp_slot_cfg.slot_mask = I2S_STD_SLOT_BOTH;
+    hfp_slot_cfg.slot_mask = I2S_STD_SLOT_BOTH;
     ESP_LOGI(BT_I2S_TAG, "reconfiguring hfp tx slot to data bit width:  %d", HFP_I2S_DATA_BIT_WIDTH);
     return hfp_slot_cfg;
 }
@@ -211,20 +206,21 @@ void bt_i2s_init_rx_chan()
     /* RX channel will be registered on our second I2S */
     i2s_chan_config_t rx_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
     i2s_new_channel(&rx_chan_cfg, NULL, &rx_chan);
+    // PHILIPS mode with MONO and 32-bit
     i2s_std_config_t std_rx_cfg = {
-        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(16000),
-        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
+        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(HFP_SAMPLE_RATE),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_MONO),
         .gpio_cfg = {
-                .mclk = I2S_GPIO_UNUSED,
-                .bclk = i2sRxPinConfig.bck,
-                .ws   = i2sRxPinConfig.ws,
-                .dout = I2S_GPIO_UNUSED,
-                .din  = i2sRxPinConfig.din,
-                .invert_flags = {
-                        .mclk_inv = false,
-                        .bclk_inv = true,
-                        .ws_inv   = false,
-                },
+            .mclk = I2S_GPIO_UNUSED,
+            .bclk = i2sRxPinConfig.bck,
+            .ws = i2sRxPinConfig.ws,
+            .dout = I2S_GPIO_UNUSED,
+            .din = i2sRxPinConfig.din,
+            .invert_flags = {
+                .mclk_inv = false,
+                .bclk_inv = false,
+                .ws_inv = false,
+            },
         },
     };
     ESP_ERROR_CHECK(i2s_channel_init_std_mode(rx_chan, &std_rx_cfg));
@@ -470,16 +466,6 @@ void bt_i2s_a2dp_write_tx_ringbuf(const uint8_t *data, uint32_t size)
     size_t item_size = 0;
     BaseType_t done = pdFALSE;
 
-/*
-void read_data_stream(const uint8_t *data, uint32_t length)
-{
-  int16_t *samples = (int16_t*) data;
-  uint32_t sample_count = length/2;
-  // Do something with the data packet
-}
-*/
-
-
     if (s_i2s_a2dp_tx_ringbuffer_mode == RINGBUFFER_MODE_DROPPING) {
         ESP_LOGW(BT_I2S_TAG, "%s - ringbuffer is full, drop this packet!", __func__);
         vRingbufferGetInfo(s_i2s_a2dp_tx_ringbuf, NULL, NULL, NULL, NULL, &item_size);
@@ -573,9 +559,7 @@ void bt_i2s_hfp_tx_task_handler(void *arg)
 {
     uint8_t *data = NULL;
     size_t item_size = 0;
-
-    const size_t item_size_upto = 240;
-    // const size_t item_size_upto = 240 * 6;
+    const size_t item_size_upto = MSBC_FRAME_SAMPLES * 2;
     size_t bytes_written = 0;
     for (;;) {
         if (s_bt_i2s_hfp_tx_task_running) {
@@ -589,7 +573,16 @@ void bt_i2s_hfp_tx_task_handler(void *arg)
                     goto Delay;
                 }
                 if (s_i2s_tx_mode == I2S_TX_MODE_HFP) { // we discard the data if we are not in hfp mode
-                    i2s_channel_write(tx_chan, data, item_size, &bytes_written, portMAX_DELAY);
+                    // swap every pair of uint16_t as per:
+                    // https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/peripherals/i2s.html#std-tx-mode
+                    int16_t *send_data = (int16_t*) data;
+                    // Swap every pair of samples
+                    for(int i = 0; i < item_size/2; i += 2) {
+                        int16_t temp = send_data[i];
+                        send_data[i] = send_data[i + 1];
+                        send_data[i + 1] = temp;
+                    }
+                    i2s_channel_write(tx_chan, send_data, item_size, &bytes_written, portMAX_DELAY);
                 }
                 vRingbufferReturnItem(s_i2s_hfp_tx_ringbuf, (void *)data);
             } else {
@@ -610,44 +603,35 @@ void bt_i2s_hfp_tx_task_handler(void *arg)
  */
 void bt_i2s_hfp_rx_task_handler(void *arg)
 {
-    // Codec (code & decode) for HFP is mSBC with specific parameters.
-    // mSBC transfers 240 (unencoded) Bytes every 7.5 ms. So we need to create a 240 Byte (120 16bit mono samples) output buffer every 7.5ms.
-    // Our mems microphone on I2S is 32bit; we get both left and right channels. This totals 64 bits, or 8 bytes, per sample.
-    // So for every 64bit (8 byte) input sample we get a 16bit (2 byte) output sample
-    const size_t item_size_upto = 120 * 8; // input sample bytes
-    // unsigned char *send_buff = calloc(item_size_upto / 4, sizeof(char)); // every 8 input bytes(64 bit) give us 2 output bytes (16bits)
-    char i2s_rx_buff[item_size_upto];
-    unsigned char i2s_send_buff[item_size_upto / 4];
-    size_t bytes_read;
-    esp_audio_enc_out_frame_t out_frame = {0};
-
-    for (;;) {
+    int32_t *i2s_buffer = malloc(MSBC_FRAME_SAMPLES * sizeof(int32_t));
+    uint8_t *pcm_buffer = malloc(MSBC_FRAME_SAMPLES * 2);
+    uint8_t *encoded_buffer = malloc(ESP_HF_MSBC_ENCODED_FRAME_SIZE);
+    
+    if (!i2s_buffer || !pcm_buffer || !encoded_buffer) {
+        ESP_LOGE(BT_I2S_TAG, "Failed to allocate buffers");
+    }
+    
+    size_t bytes_read;    
+    
+    while (1) {
         if (s_bt_i2s_hfp_rx_task_running) {
-            char *buf_ptr_read = i2s_rx_buff;
-            unsigned char *buf_ptr_write = i2s_send_buff;
-            // Read the RAW samples from the microphone
-            // i2s_common: DMA malloc info: dma_desc_num = 6, dma_desc_buf_size = dma_frame_num * slot_num * data_bit_width = 1920
-            if (i2s_channel_read(rx_chan, i2s_rx_buff, item_size_upto, &bytes_read, 100) == ESP_OK) {
-                int raw_samples_read = bytes_read / 2 / (I2S_DATA_BIT_WIDTH_32BIT / 8); // raw samples = bytes read / 2 channels / 4 bytes per channel
-                for (int i = 0; i < raw_samples_read; i++)
-                {
-                    // left channel (mono)
-                    buf_ptr_write[0] = buf_ptr_read[2]; // mid
-                    buf_ptr_write[1] = buf_ptr_read[3]; // high
-                    buf_ptr_write += 1 * (I2S_DATA_BIT_WIDTH_16BIT / 8); // 1 channel mono; step our pointer 1 x 2 bytes
-                    buf_ptr_read += 2 * (I2S_DATA_BIT_WIDTH_32BIT / 8); // 2 channel stereo; step our pointer 2 * 4 bytes
+            esp_err_t ret = i2s_channel_read(rx_chan, i2s_buffer, 
+                                            MSBC_FRAME_SAMPLES * sizeof(int32_t), 
+                                            &bytes_read, portMAX_DELAY);
+            
+            if (ret == ESP_OK && bytes_read > 0) {
+                i2s_32bit_to_16bit_pcm(i2s_buffer, pcm_buffer, MSBC_FRAME_SAMPLES);
+                
+                size_t encoded_len;
+                if (msbc_enc_data(pcm_buffer, MSBC_FRAME_SAMPLES * 2, 
+                                encoded_buffer, &encoded_len) == 0) {
+                    bt_i2s_hfp_write_rx_ringbuf(encoded_buffer, ESP_HF_MSBC_ENCODED_FRAME_SIZE);
                 }
-                // sbc encode before putting on ringbuf!
-                if (hfp_sbc_encoder(i2s_send_buff, 240, &out_frame)) {
-                    if (out_frame.encoded_bytes > ESP_HF_MSBC_ENCODED_FRAME_SIZE) {
-                        out_frame.encoded_bytes = ESP_HF_MSBC_ENCODED_FRAME_SIZE;
-                    }
-                    bt_i2s_hfp_write_rx_ringbuf(out_frame.buffer, out_frame.encoded_bytes);
-                }
-            } else { /* i2s_channel_read */
-                ESP_LOGI(BT_I2S_TAG, "%s hfp i2s read Failed!", __func__);
-            } /* i2s_channel_read */
+            }
         } else { /* if (s_bt_i2s_hfp_rx_task_running) */
+            free(i2s_buffer);
+            free(pcm_buffer);
+            free(encoded_buffer);
             // give semaphore so s_i2s_hfp_rx_ringbuf can be safely deleted
             xSemaphoreGive(s_i2s_hfp_rx_ringbuf_delete);
             ESP_LOGI(BT_I2S_TAG, "%s, deleting myself",__func__); 
@@ -657,7 +641,7 @@ void bt_i2s_hfp_rx_task_handler(void *arg)
 }
 
 /* 
-    this is called from hfp and recieves the audio data
+    this is called from hfp and recieves the decoded audio data
     and puts it in the tx ringbuffer
  */
 void bt_i2s_hfp_write_tx_ringbuf(const uint8_t *data, uint32_t size)
@@ -699,6 +683,9 @@ void bt_i2s_hfp_write_tx_ringbuf(const uint8_t *data, uint32_t size)
     }
 }
 
+size_t i2s_hfp_rx_ringbuffer_total = 0;
+size_t i2s_hfp_rx_ringbuffer_dropped = 0;
+size_t i2s_hfp_rx_ringbuffer_sent = 0;
 /* 
     this is our called from our i2s hfp rx task and recieves the (mic) audio data
     and puts it in the rx ringbuffer
@@ -708,16 +695,18 @@ void bt_i2s_hfp_write_rx_ringbuf(unsigned char *data, uint32_t size)
     if (!s_i2s_hfp_rx_ringbuf) {
         return;
     }
+    i2s_hfp_rx_ringbuffer_total += 1;
     size_t item_size = 0;
     BaseType_t done = pdFALSE;
 
     if (s_i2s_hfp_rx_ringbuffer_mode == RINGBUFFER_MODE_DROPPING) {
-        ESP_LOGW(BT_I2S_TAG, "%s - hfp rx ringbuffer is full, drop this packet!", __func__);
+        // ESP_LOGW(BT_I2S_TAG, "%s - hfp rx ringbuffer is full, drop this packet!", __func__);
         vRingbufferGetInfo(s_i2s_hfp_rx_ringbuf, NULL, NULL, NULL, NULL, &item_size);
         if (item_size <= RINGBUF_HFP_RX_HIGHEST_WATER_LEVEL) {
-            ESP_LOGI(BT_I2S_TAG, "%s - hfp rx ringbuffer data decreased! mode changed: RINGBUFFER_MODE_PROCESSING", __func__);
+            // ESP_LOGI(BT_I2S_TAG, "%s - hfp rx ringbuffer data decreased! mode changed: RINGBUFFER_MODE_PROCESSING", __func__);
             s_i2s_hfp_rx_ringbuffer_mode = RINGBUFFER_MODE_PROCESSING;
         }
+        i2s_hfp_rx_ringbuffer_dropped += 1;
         return;
     }
     done = xRingbufferSend(s_i2s_hfp_rx_ringbuf, (const char*)data, size, (TickType_t)0);
@@ -725,6 +714,9 @@ void bt_i2s_hfp_write_rx_ringbuf(unsigned char *data, uint32_t size)
     if (!done) {
         // ESP_LOGW(BT_I2S_TAG, "%s - hfp rx ringbuffer overflowed, ready to decrease data! mode changed: RINGBUFFER_MODE_DROPPING", __func__);
         s_i2s_hfp_rx_ringbuffer_mode = RINGBUFFER_MODE_DROPPING;
+        i2s_hfp_rx_ringbuffer_dropped += 1;
+    } else {
+        i2s_hfp_rx_ringbuffer_sent += 1;
     }
 
     if (s_i2s_hfp_rx_ringbuffer_mode == RINGBUFFER_MODE_PREFETCHING) {
@@ -734,6 +726,11 @@ void bt_i2s_hfp_write_rx_ringbuf(unsigned char *data, uint32_t size)
             s_i2s_hfp_rx_ringbuffer_mode = RINGBUFFER_MODE_PROCESSING;
         }
     }
+    // Log every 1000 calls
+    if (i2s_hfp_rx_ringbuffer_total % 1000 == 0) {
+        ESP_LOGI(BT_I2S_TAG, "%s - calls: %d sent: %d dropped: %d", 
+            __func__, i2s_hfp_rx_ringbuffer_total, i2s_hfp_rx_ringbuffer_sent, i2s_hfp_rx_ringbuffer_dropped);
+    }
 }
 
 /* 
@@ -741,9 +738,13 @@ void bt_i2s_hfp_write_rx_ringbuf(unsigned char *data, uint32_t size)
  */
 size_t bt_i2s_hfp_read_rx_ringbuf(uint8_t *mic_data)
 {
+    // ringbuffer needs to exist
+    if (!s_i2s_hfp_rx_ringbuf) {
+        return 0;
+    }
     size_t item_size = 0;
     if (s_i2s_hfp_rx_ringbuffer_mode != RINGBUFFER_MODE_PREFETCHING) {
-        uint8_t *ringbuf_data = (uint8_t *)xRingbufferReceiveUpTo(s_i2s_hfp_rx_ringbuf, &item_size, 10000, ESP_HF_MSBC_ENCODED_FRAME_SIZE);
+        uint8_t *ringbuf_data = xRingbufferReceiveUpTo(s_i2s_hfp_rx_ringbuf, &item_size, 10000, ESP_HF_MSBC_ENCODED_FRAME_SIZE);
         // ESP_LOGI(BT_I2S_TAG, "%s - read %d bytes from ringbuffer, expected %d", __func__, item_size, ESP_HF_MSBC_ENCODED_FRAME_SIZE);
         
         memcpy(mic_data, ringbuf_data, item_size);
@@ -758,6 +759,8 @@ void bt_i2s_hfp_start()
     bt_i2s_channels_config_hfp();
     bt_i2s_tx_channel_enable();
     bt_i2s_rx_channel_enable();
+    msbc_dec_open();
+    msbc_enc_open();
     bt_i2s_hfp_task_init();
 }
 
@@ -765,6 +768,8 @@ void bt_i2s_hfp_stop()
 {
     bt_i2s_hfp_task_deinit();
     bt_i2s_channels_disable();
+    msbc_dec_close();
+    msbc_enc_close();
     // bt_i2s_channels_config_adp();
     s_i2s_tx_mode = I2S_TX_MODE_NONE;
 }
