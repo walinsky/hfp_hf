@@ -18,7 +18,7 @@
 #include "esp_timer.h"
 
 #define BT_I2S_TAG "BT_I2S"
-
+// esp_log_level_set(BT_I2S_TAG, ESP_LOG_DEBUG);
 #define MSBC_FRAME_SAMPLES                      120  // mSBC uses 120 samples per frame (240 bytes)
 #define HFP_SAMPLE_RATE                         16000
 #define HFP_I2S_DATA_BIT_WIDTH                  I2S_DATA_BIT_WIDTH_16BIT
@@ -51,21 +51,16 @@ enum {
 /*******************************
  * STATIC VARIABLE DEFINITIONS
  ******************************/
-// static QueueHandle_t s_bt_app_task_queue = NULL;                             /* handle of work queue */
-// static TaskHandle_t s_bt_app_task_handle = NULL;                             /* handle of application task  */
 static TaskHandle_t s_bt_i2s_a2dp_tx_task_handle = NULL;                        /* handle of a2dp I2S task */
 static RingbufHandle_t s_i2s_a2dp_tx_ringbuf = NULL;                            /* handle of ringbuffer for I2S tx*/
-// static SemaphoreHandle_t s_i2s_a2dp_tx_semaphore = NULL;                        /* handle of semaphore for a2dp I2S tx*/ // NOPE! Just a tx semaphore. tx is the same i2s for hfp and adp
 static TaskHandle_t s_bt_i2s_hfp_rx_task_handle = NULL;                         /* handle of I2S rx task */
 static bool s_bt_i2s_hfp_rx_task_running = false;                               /* running state of I2S hfp rx task */
 static RingbufHandle_t s_i2s_hfp_rx_ringbuf = NULL;                             /* handle of ringbuffer for I2S hfp rx*/
 static SemaphoreHandle_t s_i2s_hfp_rx_ringbuf_delete = NULL;                    /* hfp rx ringbuffer can be safely deleted after semaphore is given */
-// static SemaphoreHandle_t s_i2s_hfp_rx_semaphore = NULL;                         /* handle of semaphore for hfp I2S rx */ // NOPE!
 static TaskHandle_t s_bt_i2s_hfp_tx_task_handle = NULL;                         /* handle of I2S hfp tx task */
 static bool s_bt_i2s_hfp_tx_task_running = false;                               /* running state of I2S hfp tx task */
 static RingbufHandle_t s_i2s_hfp_tx_ringbuf = NULL;                             /* handle of ringbuffer for hfp I2S tx*/
 static SemaphoreHandle_t s_i2s_hfp_tx_ringbuf_delete = NULL;                    /* hfp tx ringbuffer can be safely deleted after semaphore is given */
-// static SemaphoreHandle_t s_i2s_hfp_tx_semaphore = NULL;                         /* handle of semaphore for hfp I2S tx */ // NOPE!
 static uint16_t s_i2s_a2dp_tx_ringbuffer_mode = RINGBUFFER_MODE_PREFETCHING;    /* a2dp tx ringbuffer mode */
 static uint16_t s_i2s_hfp_rx_ringbuffer_mode = RINGBUFFER_MODE_PREFETCHING;     /* hfp rx ringbuffer mode */
 static uint16_t s_i2s_hfp_tx_ringbuffer_mode = RINGBUFFER_MODE_PREFETCHING;     /* hfp tx ringbuffer mode */
@@ -73,24 +68,20 @@ static uint16_t s_i2s_tx_mode = I2S_TX_MODE_NONE;
 static uint16_t s_i2s_rx_mode = I2S_RX_MODE_NONE;
 static SemaphoreHandle_t s_i2s_tx_semaphore = NULL;
 static SemaphoreHandle_t s_i2s_rx_semaphore = NULL;
-// static SemaphoreHandle_t s_i2s_tx_mode_semaphore = NULL;        /* handle of semaphore for I2S tx mode */
-// static esp_timer_handle_t s_i2s_rx_timer = NULL;
 
 /*  
     we initialize with default values here
 */
 int A2DP_SAMPLE_RATE =           A2DP_STANDARD_SAMPLE_RATE; // this might be changed by a avrc event
 int A2DP_CH_COUNT =              I2S_SLOT_MODE_STEREO;
-bool tx_chan_running =           false; // do we need this? we can check if tx_chan is NULL
-bool rx_chan_running =           false; // do we need this? we can check if rx_chan is NULL
+bool tx_chan_running =           false;
+bool rx_chan_running =           false;
+// our pin config for both I2S TX and RX
 I2S_pin_config i2sTxPinConfig = { 26, 17, 25, 0 };
 I2S_pin_config i2sRxPinConfig = { 16, 27, 0, 14 };
 // our channel handles
 i2s_chan_handle_t tx_chan = NULL;
 i2s_chan_handle_t rx_chan = NULL;
-// semaphore handle for allowing a2dp to writing to i2s
-// extern SemaphoreHandle_t s_i2s_tx_mode_semaphore;
-
 
 /*
 I2S setup and init
@@ -130,13 +121,8 @@ void bt_i2s_init() {
         ESP_LOGE(BT_I2S_TAG, "%s, s_i2s_hfp_rx_ringbuf_delete Semaphore create failed", __func__);
         return;
     }
-    //s_i2s_hfp_tx_ringbuf_delete
     bt_i2s_init_tx_chan();
-    // bt_i2s_a2dp_task_init();
-    // bt_i2s_a2dp_task_start_up();
     bt_i2s_init_rx_chan();
-    // bt_i2s_hfp_task_init();
-    // bt_i2s_hfp_task_start_up();
 }
 
 
@@ -153,10 +139,7 @@ i2s_std_clk_config_t bt_i2s_get_hfp_clk_cfg(void)
 
 i2s_std_slot_config_t bt_i2s_get_hfp_tx_slot_cfg(void)
 {
-    // decoded frame sample rate: 16000, bits per sample: 16, channel(s): 1, bitrate: 60800, frame size: 17
-    // I2S_STD_PCM_SLOT_DEFAULT_CONFIG, I2S_STD_MSB_SLOT_DEFAULT_CONFIG, or I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG
     i2s_std_slot_config_t hfp_slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(HFP_I2S_DATA_BIT_WIDTH, I2S_SLOT_MODE_MONO);
-    // hfp_slot_cfg.msb_right = true;
     hfp_slot_cfg.slot_mask = I2S_STD_SLOT_BOTH;
     ESP_LOGI(BT_I2S_TAG, "reconfiguring hfp tx slot to data bit width:  %d", HFP_I2S_DATA_BIT_WIDTH);
     return hfp_slot_cfg;
@@ -390,16 +373,10 @@ void bt_i2s_a2dp_tx_task_handler(void *arg)
 }
 
 /* 
-    this sets up our a2dp ringbuffer, and (just) creates the a2dp tx task handler
+    this sets up our a2dp ringbuffer, and creates the a2dp tx task handler
  */
 void bt_i2s_a2dp_task_init(void)
 {
-    // s_i2s_tx_mode_semaphore should this be here? we need to init it somewhere
-    // if ((s_i2s_tx_mode_semaphore = xSemaphoreCreateBinary()) == NULL) {
-    //     ESP_LOGE(BT_I2S_TAG, "%s, s_i2s_tx_mode_semaphore Semaphore create failed", __func__);
-    //     return;
-    // }
-    // bt_app_set_i2s_tx_mode_none();
     ESP_LOGI(BT_I2S_TAG, "ringbuffer data empty! mode changed: RINGBUFFER_MODE_PREFETCHING");
     s_i2s_a2dp_tx_ringbuffer_mode = RINGBUFFER_MODE_PREFETCHING;
     if ((s_i2s_a2dp_tx_ringbuf = xRingbufferCreate(RINGBUF_HIGHEST_WATER_LEVEL, RINGBUF_TYPE_BYTEBUF)) == NULL) {
@@ -409,6 +386,9 @@ void bt_i2s_a2dp_task_init(void)
     xTaskCreate(bt_i2s_a2dp_tx_task_handler, "BtI2Sa2dpTask", 2048, NULL, configMAX_PRIORITIES - 4, &s_bt_i2s_a2dp_tx_task_handle);
 }
 
+/* 
+    delete a2dp tx task handler and delete ringbuffer
+ */
 void bt_i2s_a2dp_task_deinit(void)
 {
     if (s_bt_i2s_a2dp_tx_task_handle) {
@@ -419,22 +399,13 @@ void bt_i2s_a2dp_task_deinit(void)
         vRingbufferDelete(s_i2s_a2dp_tx_ringbuf);
         s_i2s_a2dp_tx_ringbuf = NULL;
     }
-    //don't destroy the semaphore. do this in bt_i2s deinit
-    // if (s_i2s_a2dp_tx_semaphore) {
-    //     vSemaphoreDelete(s_i2s_a2dp_tx_semaphore);
-    //     s_i2s_a2dp_tx_semaphore = NULL;
-    // }
-    // if (s_i2s_tx_mode_semaphore) {
-    //     vSemaphoreDelete(s_i2s_tx_mode_semaphore);
-    //     s_i2s_tx_mode_semaphore = NULL;
-    // }
 }
 
 /* 
     start our a2dp tx task.
     this should be called after bt_i2s_task_init
  */
-void bt_i2s_a2dp_task_start_up(void)
+void bt_i2s_a2dp_task_start_up(void) // change my name!!!
 {
     
     bt_i2s_channels_config_adp();
@@ -446,19 +417,15 @@ void bt_i2s_a2dp_task_start_up(void)
     stop our a2dp tx task.
     this should be called before bt_i2s_task_deinit
  */
-void bt_i2s_a2dp_task_shut_down(void)
+void bt_i2s_a2dp_task_shut_down(void) // change my name!!!
 {
-    // if (s_bt_i2s_a2dp_tx_task_handle) {
-    //     vTaskDelete(s_bt_i2s_a2dp_tx_task_handle);
-    //     s_bt_i2s_a2dp_tx_task_handle = NULL;
-    // }
     s_i2s_tx_mode = I2S_TX_MODE_NONE;
     bt_i2s_tx_channel_disable();
 }
 
 
 /* 
-    this is our callback function that recieves the data
+    this is our callback function that recieves the a2dp sink data
     and puts it in the tx ringbuffer
  */
 void bt_i2s_a2dp_write_tx_ringbuf(const uint8_t *data, uint32_t size)
@@ -498,7 +465,7 @@ void bt_i2s_a2dp_write_tx_ringbuf(const uint8_t *data, uint32_t size)
 }
 
 /* 
-    this sets up our hfp ringbuffers, and creates the hfp tx and rx and tasks
+    this sets up our hfp tx and rx ringbuffers, and creates the hfp tx and rx tasks
  */
 void bt_i2s_hfp_task_init(void)
 {
@@ -526,8 +493,7 @@ void bt_i2s_hfp_task_deinit(void)
     s_i2s_tx_mode = I2S_TX_MODE_NONE;
     s_i2s_rx_mode = I2S_RX_MODE_NONE;
     if (s_bt_i2s_hfp_tx_task_handle) {
-        // vTaskDelete(s_bt_i2s_hfp_tx_task_handle);
-        // task should kill itself
+        // task deletes itself when we set task_running to false
         s_bt_i2s_hfp_tx_task_running = false;
         s_bt_i2s_hfp_tx_task_handle = NULL;
     }
@@ -539,7 +505,7 @@ void bt_i2s_hfp_task_deinit(void)
         }
     }
     if (s_bt_i2s_hfp_rx_task_handle) {
-        //vTaskDelete(s_bt_i2s_hfp_rx_task_handle);
+        // task deletes itself when we set task_running to false
         s_bt_i2s_hfp_rx_task_running = false;
         s_bt_i2s_hfp_rx_task_handle = NULL;
     }
@@ -587,9 +553,9 @@ void bt_i2s_hfp_tx_task_handler(void *arg)
                 vRingbufferReturnItem(s_i2s_hfp_tx_ringbuf, (void *)data);
             } else {
                 Delay:
-                    vTaskDelay(pdMS_TO_TICKS(40)); // give ringbuffer some time to prefetch
+                    vTaskDelay(pdMS_TO_TICKS(40)); // give ringbuffer some time to prefetch. 40 ticks is arbitrary. should we change this?
             }
-        } else {
+        } else { /* if (s_bt_i2s_hfp_tx_task_running) */
             // give semaphore so s_i2s_hfp_tx_ringbuf can be safely deleted
             xSemaphoreGive(s_i2s_hfp_tx_ringbuf_delete);
             ESP_LOGI(BT_I2S_TAG, "%s, deleting myself",__func__); 
@@ -683,13 +649,14 @@ void bt_i2s_hfp_write_tx_ringbuf(const uint8_t *data, uint32_t size)
     }
 }
 
+
+/* 
+    this is called from our i2s hfp rx task and recieves the (mic) audio data
+    and puts it in the rx ringbuffer
+ */
 size_t i2s_hfp_rx_ringbuffer_total = 0;
 size_t i2s_hfp_rx_ringbuffer_dropped = 0;
 size_t i2s_hfp_rx_ringbuffer_sent = 0;
-/* 
-    this is our called from our i2s hfp rx task and recieves the (mic) audio data
-    and puts it in the rx ringbuffer
- */
 void bt_i2s_hfp_write_rx_ringbuf(unsigned char *data, uint32_t size)
 {
     if (!s_i2s_hfp_rx_ringbuf) {
@@ -756,11 +723,11 @@ size_t bt_i2s_hfp_read_rx_ringbuf(uint8_t *mic_data)
 void bt_i2s_hfp_start()
 {
     s_i2s_tx_mode = I2S_TX_MODE_HFP;
+    msbc_dec_open();
+    msbc_enc_open();
     bt_i2s_channels_config_hfp();
     bt_i2s_tx_channel_enable();
     bt_i2s_rx_channel_enable();
-    msbc_dec_open();
-    msbc_enc_open();
     bt_i2s_hfp_task_init();
 }
 
@@ -770,6 +737,5 @@ void bt_i2s_hfp_stop()
     bt_i2s_channels_disable();
     msbc_dec_close();
     msbc_enc_close();
-    // bt_i2s_channels_config_adp();
     s_i2s_tx_mode = I2S_TX_MODE_NONE;
 }

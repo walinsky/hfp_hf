@@ -181,21 +181,6 @@ int msbc_dec_data(const uint8_t *in_data, size_t in_data_len,
     return 0;
 }
 
-/* void i2s_32bit_to_16bit_pcm(const int32_t *i2s_data, uint8_t *pcm_data, size_t num_samples)
-{
-    if (i2s_data == NULL || pcm_data == NULL) {
-        ESP_LOGE(TAG, "Invalid parameters for I2S conversion");
-        return;
-    }
-
-    int16_t *output = (int16_t *)pcm_data;
-    
-    for (size_t i = 0; i < num_samples; i++) {
-        // INMP441: 24-bit data left-aligned in 32-bit word
-        // Shift right by 16 to get most significant 16 bits
-        output[i] = (int16_t)(i2s_data[i] >> 16);
-    }
-} */
 void i2s_32bit_to_16bit_pcm(const int32_t *i2s_data, uint8_t *pcm_data, size_t num_samples)
 {
     uint8_t *input_bytes = (uint8_t *)i2s_data;

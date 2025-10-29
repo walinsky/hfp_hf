@@ -17,7 +17,7 @@
 #include "esp_bt_device.h"
 #include "esp_gap_bt_api.h"
 #include "esp_hf_client_api.h"
-// #include "esp_pbac_api.h"
+#include "esp_pbac_api.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -27,16 +27,9 @@
 #include "sys/time.h"
 #include "sdkconfig.h"
 
-#include "esp_sbc_def.h"
-#include "esp_audio_dec_reg.h"
-#include "esp_audio_enc_reg.h"
-#include "esp_sbc_dec.h"
-#include "esp_sbc_enc.h"
-#include "esp_hf_defs.h"
-
 #include "bt_i2s.h"
 #include "codec.h"
-
+#include "bt_app_pbac.h"
 
 const char *c_hf_evt_str[] = {
     "CONNECTION_STATE_EVT",              /*!< connection state changed event */
@@ -185,21 +178,19 @@ extern esp_bd_addr_t peer_addr;
 // If you want to connect a specific device, add it's address here
 // esp_bd_addr_t peer_addr = {0xac, 0x67, 0xb2, 0x53, 0x77, 0xbe};
 
-extern i2s_chan_handle_t tx_chan;
-extern i2s_chan_handle_t rx_chan;
-
-static TaskHandle_t s_hfp_heap_monitor_task_handle = NULL; 
-static bool s_hfp_heap_monitor_task_running = false;
+#if CONFIG_BT_HFP_AUDIO_DATA_PATH_HCI && CONFIG_BT_HFP_USE_EXTERNAL_CODEC
 
 static esp_hf_sync_conn_hdl_t s_sync_conn_hdl;
 static bool s_msbc_air_mode = false;
-static bool s_hfp_audio_connected = false;
-// QueueHandle_t s_audio_buff_queue = NULL;
-// static int s_audio_buff_cnt = 0;
-
-
+QueueHandle_t s_audio_buff_queue = NULL;
+static int s_audio_buff_cnt = 0;
 
 static int s_audio_callback_cnt = 0;
+
+extern i2s_chan_handle_t tx_chan;
+extern i2s_chan_handle_t rx_chan;
+static bool s_hfp_audio_connected = false;
+
 static void bt_app_hf_client_audio_data_cb(esp_hf_sync_conn_hdl_t sync_conn_hdl, esp_hf_audio_buff_t *audio_buf, bool is_bad_frame)
 {
     if (!s_hfp_audio_connected) {
@@ -244,6 +235,7 @@ static void bt_app_hf_client_audio_data_cb(esp_hf_sync_conn_hdl_t sync_conn_hdl,
     s_audio_callback_cnt++;
 }
 
+#endif /* #if CONFIG_BT_HFP_AUDIO_DATA_PATH_HCI && CONFIG_BT_HFP_USE_EXTERNAL_CODEC */
 
 /* callback for HF_CLIENT */
 void bt_app_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_t *param)
@@ -263,7 +255,7 @@ void bt_app_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_
                     param->conn_stat.chld_feat);
             memcpy(peer_addr,param->conn_stat.remote_bda,ESP_BD_ADDR_LEN);
             if (param->conn_stat.state == ESP_HF_CLIENT_CONNECTION_STATE_SLC_CONNECTED) {
-                // esp_pbac_connect(peer_addr);
+                esp_pbac_connect(peer_addr);
             }
             break;
         }
@@ -285,9 +277,7 @@ void bt_app_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_
             if (param->audio_stat.state == ESP_HF_CLIENT_AUDIO_STATE_CONNECTED ||
                 param->audio_stat.state == ESP_HF_CLIENT_AUDIO_STATE_CONNECTED_MSBC) {
                 s_sync_conn_hdl = param->audio_stat.sync_conn_handle;
-                s_hfp_heap_monitor_task_running = true;
                 s_hfp_audio_connected = true;
-                xTaskCreate(&heap_monitor_task, "HeapMonitor", 4096, NULL, 5, &s_hfp_heap_monitor_task_handle);
                 bt_i2s_hfp_start();
                 esp_hf_client_register_audio_data_callback(bt_app_hf_client_audio_data_cb);
             } else if (param->audio_stat.state == ESP_HF_CLIENT_AUDIO_STATE_DISCONNECTED) {
@@ -457,25 +447,24 @@ void bt_app_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_
     }
 }
 
-static void heap_monitor_task(void *pvParameters) {
-    for (;;) {
-        // Get the number of free bytes in the heap
-        int heap_size = esp_get_free_heap_size();
-        ESP_LOGI(BT_HF_TAG, "%s, heap size: %d",__func__, heap_size);   
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        if (!s_hfp_heap_monitor_task_running){
-            ESP_LOGI(BT_HF_TAG, "%s, deleting myself",__func__); 
-            vTaskDelete(NULL);
-        }
-    }
-}
-
 static void kill_hfp_audio_task(void *pvParameters) {
     ESP_LOGI(BT_HF_TAG, "%s stopping I2S hfp", __func__);
     bt_i2s_hfp_stop();
     ESP_LOGI(BT_HF_TAG, "%s stopping monitor task", __func__);
-    s_hfp_heap_monitor_task_running = false;
-    // vTaskDelete(s_hfp_heap_monitor_task_handle);
     ESP_LOGI(BT_HF_TAG, "%s, deleting myself",__func__); 
     vTaskDelete(NULL);
+}
+
+// When incoming call received with number
+void on_incoming_call(const char *caller_number)
+{
+    contact_t *contact = bt_app_pbac_find_by_number(caller_number);
+    
+    if (contact) {
+        printf("Incoming call from: %s\n", contact->full_name);
+        // Show contact name on display
+        free(contact);
+    } else {
+        printf("Incoming call from: %s (unknown)\n", caller_number);
+    }
 }

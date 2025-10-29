@@ -21,23 +21,47 @@
 #include "esp_bt_device.h"
 #include "esp_gap_bt_api.h"
 #include "esp_hf_client_api.h"
-// #include "esp_pbac_api.h"
+#include "esp_pbac_api.h"
 #include "bt_app_hf.h"
 #include "gpio_pcm_config.h"
 #include "esp_console.h"
 #include "app_hf_msg_set.h"
-// #include "bt_app_pbac.h"
+#include "bt_app_pbac.h"
 #include "bt_i2s.h"
-
-
-TaskHandle_t mem_task_handle;
+#include "esp_heap_caps.h"
+#include "esp_system.h"
 
 esp_bd_addr_t peer_addr = {0};
 static char peer_bdname[ESP_BT_GAP_MAX_BDNAME_LEN + 1];
 static uint8_t peer_bdname_len;
-static const char remote_device_name[] = CONFIG_EXAMPLE_PEER_DEVICE_NAME;
+static const char remote_device_name[] = "hfp_hf";
+#define HEAP_MONITOR_PERIOD_MS 5000  // Report every 5 seconds
 
-static void mem_task(void *args);
+static void heap_monitor_task(void *arg)
+{
+    while (1) {
+        // Get heap information
+        size_t free_heap = esp_get_free_heap_size();
+        size_t min_free_heap = esp_get_minimum_free_heap_size();
+        size_t largest_free_block = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+        
+        // Get internal DRAM info
+        size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        size_t total_internal = heap_caps_get_total_size(MALLOC_CAP_INTERNAL);
+        size_t used_internal = total_internal - free_internal;
+        
+        ESP_LOGI("HEAP_MONITOR", 
+                "Free: %d bytes | Min Free: %d bytes | Largest Block: %d bytes | Used: %d/%d (%.1f%%)",
+                free_heap,
+                min_free_heap,
+                largest_free_block,
+                used_internal,
+                total_internal,
+                (used_internal * 100.0f) / total_internal);
+        
+        vTaskDelay(pdMS_TO_TICKS(HEAP_MONITOR_PERIOD_MS));
+    }
+}
 
 static char *bda2str(esp_bd_addr_t bda, char *str, size_t size)
 {
@@ -135,19 +159,6 @@ void esp_bt_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param)
         break;
     }
 
-#if (CONFIG_EXAMPLE_SSP_ENABLED == true)
-    case ESP_BT_GAP_CFM_REQ_EVT:
-        ESP_LOGI(BT_HF_TAG, "ESP_BT_GAP_CFM_REQ_EVT Please compare the numeric value: %06"PRIu32, param->cfm_req.num_val);
-        esp_bt_gap_ssp_confirm_reply(param->cfm_req.bda, true);
-        break;
-    case ESP_BT_GAP_KEY_NOTIF_EVT:
-        ESP_LOGI(BT_HF_TAG, "ESP_BT_GAP_KEY_NOTIF_EVT passkey:%06"PRIu32, param->key_notif.passkey);
-        break;
-    case ESP_BT_GAP_KEY_REQ_EVT:
-        ESP_LOGI(BT_HF_TAG, "ESP_BT_GAP_KEY_REQ_EVT Please enter passkey!");
-        break;
-#endif
-
     case ESP_BT_GAP_MODE_CHG_EVT:
         ESP_LOGI(BT_HF_TAG, "ESP_BT_GAP_MODE_CHG_EVT mode:%d", param->mode_chg.mode);
         break;
@@ -179,8 +190,6 @@ void app_main(void)
     }
     ESP_ERROR_CHECK( ret );
 
-    // xTaskCreate(&mem_task, "mem_task", 3072, &mem_task_handle, 5, &mem_task_handle);
-    // xTaskCreate(mem_task, "mem_task", 2048, NULL, configMAX_PRIORITIES - 4, &mem_task_handle);
     ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_BLE));
 
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
@@ -195,9 +204,8 @@ void app_main(void)
     }
 
     esp_bluedroid_config_t bluedroid_cfg = BT_BLUEDROID_INIT_CONFIG_DEFAULT();
-#if (CONFIG_EXAMPLE_SSP_ENABLED == false)
     bluedroid_cfg.ssp_en = false;
-#endif
+
     if ((ret = esp_bluedroid_init_with_cfg(&bluedroid_cfg)) != ESP_OK) {
         ESP_LOGE(BT_HF_TAG, "%s initialize bluedroid failed: %s", __func__, esp_err_to_name(ret));
         return;
@@ -210,10 +218,18 @@ void app_main(void)
 
     ESP_LOGI(BT_HF_TAG, "Own address:[%s]", bda2str((uint8_t *)esp_bt_dev_get_address(), bda_str, sizeof(bda_str)));
     
+    // Start heap monitor task
+    xTaskCreate(heap_monitor_task, "heap_mon", 3072, NULL, 1, NULL);
+
+    /* init our I2S */
     bt_i2s_set_tx_I2S_pins( 26, 17, 25, 0 );
     bt_i2s_set_rx_I2S_pins( 16, 27, 0, 14 );
     bt_i2s_init();
-    
+    phonebook_init();
+    phonebook_set_country_code("31");  // Netherlands - change as needed
+
+    // Start phonebook processing task BEFORE Bluetooth
+    bt_app_pbac_task_start();
     /* create application task */
     bt_app_task_start_up();
 
@@ -266,13 +282,8 @@ static void bt_hf_client_hdl_stack_evt(uint16_t event, void *p_param)
         esp_bt_gap_register_callback(esp_bt_gap_cb);
         esp_hf_client_register_callback(bt_app_hf_client_cb);
         esp_hf_client_init();
-
-#if (CONFIG_EXAMPLE_SSP_ENABLED == true)
-    /* Set default parameters for Secure Simple Pairing */
-    esp_bt_sp_param_t param_type = ESP_BT_SP_IOCAP_MODE;
-    esp_bt_io_cap_t iocap = ESP_BT_IO_CAP_IO;
-    esp_bt_gap_set_security_param(param_type, &iocap, sizeof(uint8_t));
-#endif
+        esp_pbac_register_callback(bt_app_pbac_cb);
+        esp_pbac_init();
 
         esp_bt_pin_type_t pin_type = ESP_BT_PIN_TYPE_FIXED;
         esp_bt_pin_code_t pin_code;
