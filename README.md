@@ -12,15 +12,21 @@ In fact, it actually works - inputting and outputting real audio.
 ### Hardware Required
 
 This example is designed to run on commonly available ESP32 development board, e.g. ESP32-DevKitC. To operate it should be connected to an AG running on a smartphone or on another ESP32 development board loaded with Hands Free Audio Gateway (hfp_ag) example from ESP-IDF.
+
 You'll need a I2S DAC to output sound to your speakers.
+
 ![DAC](img/dac.jpg)
+
 Furthermore you'll need to connect a INMP441 MEMS microphone (L/R to ground for left audio input). These are pretty cheap high quality I2S microphones.
+
 ![INMP441 MEMS microphone](img/INMP441-MEMS.jpg)
 
 ### Configure the project
 
 All needed configs have already been set (hardcoded) in sdkconfig.defaults.
+
 To get things running you should be able to just Build and Flash. (you'll need to wire your mic and dac according to the provided settings)
+
 If you wish to wire your mic and dac to other pins, just make sure you set your correct pin config in main.
 
 ### Build and Flash
@@ -36,6 +42,14 @@ idf.py -p PORT flash monitor
 (To exit the serial monitor, type ``Ctrl-]``.)
 
 See the [Getting Started Guide](https://docs.espressif.com/projects/esp-idf/en/latest/get-started/index.html) for full steps to configure and use ESP-IDF to build projects.
+
+## Usage
+After flashing your phone should be able to detect a bluetooth device called "hfp_hf"; or whatever name you gave it in main.c (remote_device_name[] = "hfp_hf";)
+
+Just connect your phone to the device; and all audio will be routed through your mic and speakers. Just like a real carkit.
+
+As a finger exercise I added phonebook support, which implements the undocumented PBAC features.
+
 
 ## Example Output
 
