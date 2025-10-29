@@ -19,7 +19,7 @@
 #define BT_PBAC_TAG "BT_PBAC"
 #define PBAC_QUEUE_SIZE 50
 #define PBAC_TASK_STACK_SIZE 8192
-#define PBAC_TASK_PRIORITY 10
+#define PBAC_TASK_PRIORITY 5
 #define PHONEBOOK_PAGE_SIZE 50
 
 esp_pbac_conn_hdl_t pba_conn_handle;

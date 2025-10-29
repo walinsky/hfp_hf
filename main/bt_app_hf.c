@@ -191,6 +191,20 @@ extern i2s_chan_handle_t tx_chan;
 extern i2s_chan_handle_t rx_chan;
 static bool s_hfp_audio_connected = false;
 
+// When incoming call received with number
+void on_incoming_call(const char *caller_number)
+{
+    contact_t *contact = bt_app_pbac_find_by_number(caller_number);
+    
+    if (contact) {
+        printf("Incoming call from: %s\n", contact->full_name);
+        // Show contact name on display
+        free(contact);
+    } else {
+        printf("Incoming call from: %s (unknown)\n", caller_number);
+    }
+}
+
 static void bt_app_hf_client_audio_data_cb(esp_hf_sync_conn_hdl_t sync_conn_hdl, esp_hf_audio_buff_t *audio_buf, bool is_bad_frame)
 {
     if (!s_hfp_audio_connected) {
@@ -366,6 +380,9 @@ void bt_app_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_
         {
             ESP_LOGI(BT_HF_TAG, "--clip number %s",
                     (param->clip.number == NULL) ? "NULL" : (param->clip.number));
+            if (param->clip.number != NULL) {
+                on_incoming_call(param->clip.number);
+            }
             break;
         }
 
@@ -455,16 +472,3 @@ static void kill_hfp_audio_task(void *pvParameters) {
     vTaskDelete(NULL);
 }
 
-// When incoming call received with number
-void on_incoming_call(const char *caller_number)
-{
-    contact_t *contact = bt_app_pbac_find_by_number(caller_number);
-    
-    if (contact) {
-        printf("Incoming call from: %s\n", contact->full_name);
-        // Show contact name on display
-        free(contact);
-    } else {
-        printf("Incoming call from: %s (unknown)\n", caller_number);
-    }
-}
