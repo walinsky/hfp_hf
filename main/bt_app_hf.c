@@ -30,6 +30,7 @@
 #include "bt_i2s.h"
 #include "codec.h"
 #include "bt_app_pbac.h"
+#include "ringtone.h"
 
 const char *c_hf_evt_str[] = {
     "CONNECTION_STATE_EVT",              /*!< connection state changed event */
@@ -290,6 +291,8 @@ void bt_app_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_
 
             if (param->audio_stat.state == ESP_HF_CLIENT_AUDIO_STATE_CONNECTED ||
                 param->audio_stat.state == ESP_HF_CLIENT_AUDIO_STATE_CONNECTED_MSBC) {
+                // Stop ringtone when phone audio connects
+                ringtone_stop();
                 s_sync_conn_hdl = param->audio_stat.sync_conn_handle;
                 s_hfp_audio_connected = true;
                 bt_i2s_hfp_start();
@@ -359,6 +362,10 @@ void bt_app_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_
         {
             ESP_LOGI(BT_HF_TAG, "--Call setup indicator %s",
                     c_call_setup_str[param->call_setup.status]);
+            // Stop ringtone when call setup ends (rejected/answered/missed)
+            if (param->call_setup.status == ESP_HF_CALL_SETUP_STATUS_IDLE) {
+                ringtone_stop();
+            }
             break;
         }
 
@@ -440,6 +447,17 @@ void bt_app_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_
                     (param->binp.number == NULL) ? "NULL" : param->binp.number);
             break;
         }
+
+        case ESP_HF_CLIENT_RING_IND_EVT:
+        {
+            ESP_LOGI(BT_HF_TAG, "--ring indication event");
+                // Play 2-second ringtone beep if audio not connected yet
+            if (!s_hfp_audio_connected) {
+                ringtone_play_beep();
+            }
+            break;
+        }
+
         case ESP_HF_CLIENT_PKT_STAT_NUMS_GET_EVT:
         {
             ESP_LOGI(BT_HF_TAG, "total packets: %d, received ok: %d, received err: %d, received none: %d, received lost: %d, sent: %d, sent lost: %d", 
